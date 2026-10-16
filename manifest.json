@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "kili.miracast",
+  "name": "Miracast",
+  "version": "1.0.0",
+  "author": "kili",
+  "description": "Miracast sender status with one-click picker and disconnect in the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Miracast",
+    "description": "Show Miracast/P2P status, open the Network Displays picker, disconnect.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
