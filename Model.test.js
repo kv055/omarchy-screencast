@@ -457,6 +457,28 @@ describe("known displays", () => {
     assert.equal(M.isPeerSelector("x".repeat(65)), false);
     assert.equal(M.isPeerSelector("a\nb"), false);
     assert.equal(M.isPeerSelector("a\tb"), false);
+    assert.equal(M.isPeerSelector("-x"), false);
+    assert.equal(M.isPeerSelector("--wfd-timeout"), false);
+  });
+
+  it("resolves scripted peers to exact MACs", () => {
+    const sinks = M.parseStatus(NMCLI_SCAN).sinks;
+    assert.deepEqual(M.resolvePeer(sinks, "9a:03:cf:fc:40:a3"),
+      { mac: "9a:03:cf:fc:40:a3", name: "U0320" });
+    assert.deepEqual(M.resolvePeer(sinks, "11:22:33:44:55:66"),
+      { mac: "11:22:33:44:55:66", name: "" });
+    assert.deepEqual(M.resolvePeer(sinks, "u0320"),
+      { mac: "9A:03:CF:FC:40:A3", name: "U0320" });
+    assert.deepEqual(M.resolvePeer(sinks, "No Such Display"), { error: "unknown peer" });
+    assert.deepEqual(M.resolvePeer([], "U0320"), { error: "unknown peer" });
+    assert.deepEqual(M.resolvePeer(null, "U0320"), { error: "unknown peer" });
+    const dupes = [
+      { name: "Twin", hw: "AA:AA:AA:AA:AA:AA", wfd: true, active: false },
+      { name: "twin", hw: "BB:BB:BB:BB:BB:BB", wfd: true, active: false }
+    ];
+    assert.deepEqual(M.resolvePeer(dupes, "TWIN"), { error: "ambiguous peer" });
+    const ragged = [null, {}, { name: "U0320" }, { name: "U0320", hw: "not-a-mac" }];
+    assert.deepEqual(M.resolvePeer(ragged, "U0320"), { error: "unknown peer" });
   });
 
   it("cycles activity dots across timer frames", () => {

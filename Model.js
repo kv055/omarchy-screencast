@@ -303,8 +303,41 @@ function isPeerSelector(value) {
   var s = String(value === undefined || value === null ? "" : value).trim()
   if (s === "" || s.length > 64) return false
   if (/^\d+$/.test(s)) return false
+  if (/^-/.test(s)) return false
   if (isMacAddress(s)) return true
   return !/[\x00-\x1f\x7f]/.test(s)
+}
+
+// Resolve a scripted peer selector against cached discovery. MACs pass
+// through untouched (looking up a display name when cached); names must
+// match exactly (case-insensitive) and unambiguously, because FluxCast
+// would otherwise cast to the first substring match. Returns {mac, name}
+// or {error}. Never throws.
+function resolvePeer(sinks, selector) {
+  var list = sinks || []
+  var s = String(selector === undefined || selector === null ? "" : selector).trim()
+  var i, row
+  if (isMacAddress(s)) {
+    var up = s.toUpperCase()
+    for (i = 0; i < list.length; i++) {
+      row = list[i] || {}
+      if (String(row.hw || "").toUpperCase() === up && row.name) {
+        return { mac: s, name: row.name }
+      }
+    }
+    return { mac: s, name: "" }
+  }
+  var lower = s.toLowerCase()
+  var hits = []
+  for (i = 0; i < list.length; i++) {
+    row = list[i] || {}
+    if (String(row.name || "").toLowerCase() === lower && isMacAddress(row.hw)) {
+      hits.push(row)
+    }
+  }
+  if (hits.length === 1) return { mac: hits[0].hw, name: hits[0].name }
+  if (hits.length === 0) return { error: "unknown peer" }
+  return { error: "ambiguous peer" }
 }
 
 // Single-quote a string for sh: wrap in quotes, escape embedded ones.
@@ -334,13 +367,14 @@ function connectCommand(peer) {
 }
 
 // argv tearing down a FluxCast WFD session: SIGINT first so the engine runs
-// its own cleanup (media stop, NM deactivation), polled every 150 ms so
-// a fast exit returns immediately, SIGTERM past ~2 s for stragglers,
-// then an nmcli disconnect for a lingering P2P link. Always exits true.
+// its own cleanup (media stop, NM deactivation, GO-intent restore last),
+// polled every 150 ms so a fast exit returns immediately, SIGTERM past
+// ~5 s for wedged stragglers, then an nmcli disconnect for a lingering
+// P2P link. Always exits true.
 function disconnectCommand() {
   var script = "pkill -INT -f '" + ENGINE_PATTERN + "' 2>/dev/null; "
-    + "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do "
-    + "pgrep -f '" + ENGINE_PATTERN + "' >/dev/null 2>&1 || break; sleep 0.15; done; "
+    + "i=0; while [ $i -lt 33 ]; do "
+    + "pgrep -f '" + ENGINE_PATTERN + "' >/dev/null 2>&1 || break; sleep 0.15; i=$((i+1)); done; "
     + "pkill -f '" + ENGINE_PATTERN + "' 2>/dev/null; "
     + "for dev in $(nmcli -t -f DEVICE,TYPE device status 2>/dev/null | awk -F: '$2==\"wifi-p2p\"{print $1}'); do "
     + "nmcli device disconnect \"$dev\" >/dev/null 2>&1; done; true"
@@ -371,6 +405,7 @@ if (typeof module !== "undefined") {
     sessionMac: sessionMac,
     isMacAddress: isMacAddress,
     isPeerSelector: isPeerSelector,
+    resolvePeer: resolvePeer,
     shQuote: shQuote,
     connectCommand: connectCommand,
     disconnectCommand: disconnectCommand,

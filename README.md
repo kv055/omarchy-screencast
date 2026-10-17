@@ -24,7 +24,9 @@ FluxCast session and drops a lingering P2P link).
 | `Model.test.js`| Maintained tests (`node --test`)                                     |
 
 Peer names resolve as: NetworkManager P2P device name → mDNS hostname →
-raw NetworkManager connection string.
+raw NetworkManager connection string. Matching is by MAC; receivers
+whose group-interface MAC differs from their discovery MAC show the raw
+link name instead of badges.
 
 ## Migrating from 1.x
 

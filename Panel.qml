@@ -67,9 +67,13 @@ Panel {
     } else if (pendingConnect) {
       // Slow legitimate connects (scan retries plus NM activation) can
       // outlast the give-up timer, so a live handshake extends it; an
-      // engine that died before its first post-click result clears it.
+      // engine that died before its first post-click result clears it
+      // and rescans, so a retry resolves against fresh discovery.
       if (parsed.connecting) pendingTimer.restart()
-      else if (doneSeq > pendingSeq && !parsed.appRunning) pendingConnect = false
+      else if (doneSeq > pendingSeq && !parsed.appRunning) {
+        pendingConnect = false
+        refresh(true)
+      }
     }
     if (parsed.hasSinks) {
       sinks = parsed.sinks
@@ -217,6 +221,9 @@ Panel {
     target: root.ipcTarget
 
     function status(): string {
+      // Answers from cache, but kicks a refresh so consecutive polls
+      // converge on fresh state.
+      root.refresh(false)
       return JSON.stringify({
         connected: root.connected,
         connecting: root.connecting,
@@ -231,7 +238,14 @@ Panel {
       if (root.appRunning || root.linkActive || root.pendingConnect || disconnectProc.running) {
         return JSON.stringify({ ok: false, reason: "busy" })
       }
-      root.connectTo(peer, peer)
+      // Names resolve against cached discovery to an exact MAC first:
+      // FluxCast itself would cast to the first substring match.
+      var resolved = Model.resolvePeer(root.sinks, peer)
+      if (resolved.error) {
+        root.refresh(true)
+        return JSON.stringify({ ok: false, reason: resolved.error })
+      }
+      root.connectTo(resolved.mac, resolved.name || peer)
       return JSON.stringify({ ok: true })
     }
 
