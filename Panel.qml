@@ -267,7 +267,7 @@ Panel {
         }
 
         PanelSectionHeader {
-          text: "NEARBY DISPLAYS"
+          text: "AVAILABLE"
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
         }
@@ -310,7 +310,7 @@ Panel {
         PanelSectionHeader {
           visible: root.knownRows.length > 0
           height: visible ? implicitHeight : 0
-          text: "KNOWN DISPLAYS"
+          text: "PREVIOUS CONNECTIONS"
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
         }

@@ -4,9 +4,9 @@ Omarchy bar widget for Miracast screen sharing (`kili.miracast`).
 
 A cast icon in the top bar mirrors the sender state — idle, picker open,
 connecting, connected — and a click opens a tiny popup with the link status,
-nearby displays (P2P discovery on open) and known displays (connection
-history in `~/.local/state/kili.miracast/history.tsv`, recorded on
-connect). Clicking a row opens the Network Displays picker; the standalone
+available displays (P2P discovery on open) and previously connected
+displays (connection history in
+`~/.local/state/kili.miracast/history.tsv`, recorded on connect). Clicking a row opens the Network Displays picker; the standalone
 button appears only when no displays are listed (**Connect**) or a link is
 up (**Disconnect**, which quits the app and drops a lingering P2P link).
 
