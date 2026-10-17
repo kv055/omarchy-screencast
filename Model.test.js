@@ -66,6 +66,27 @@ const NMCLI_NO_P2P =
   "nm_name=\n" +
   "mdns_name=\n";
 
+// Scan-mode output: fast block plus a sink section. The third name carries
+// a colon, an equals sign and a non-ASCII char to prove tab-splitting.
+const NMCLI_SCAN =
+  "app=stopped\n" +
+  "p2p-dev-wlp0s20f3:wifi-p2p:disconnected:\n" +
+  "alias_name=\n" +
+  "nm_name=\n" +
+  "mdns_name=\n" +
+  "sink_begin\n" +
+  "sink=U0320\t9A:03:CF:FC:40:A3\t1\t1\n" +
+  "sink=Emilias 2. Fire TV Stick\tC6:95:00:71:95:A3\t0\t0\n" +
+  "sink=B\u00fcro: TV=neu\tAA:BB:CC:DD:EE:FF\t1\t0\n";
+
+const NMCLI_SCAN_EMPTY =
+  "app=stopped\n" +
+  "p2p-dev-wlp0s20f3:wifi-p2p:disconnected:\n" +
+  "alias_name=\n" +
+  "nm_name=\n" +
+  "mdns_name=\n" +
+  "sink_begin\n";
+
 describe("splitTerse", () => {
   it("splits on unescaped colons and unescapes colons", () => {
     assert.deepEqual(
@@ -98,7 +119,9 @@ describe("parseStatus", () => {
       nmName: "",
       mdnsName: "",
       connected: true,
-      connecting: false
+      connecting: false,
+      sinks: [],
+      hasSinks: false
     });
   });
 
@@ -145,6 +168,41 @@ describe("parseStatus", () => {
       assert.equal(s.connecting, false);
       assert.equal(s.appRunning, false);
     }
+  });
+});
+
+describe("sink discovery", () => {
+  it("parses scan results with flags", () => {
+    const s = M.parseStatus(NMCLI_SCAN);
+    assert.equal(s.hasSinks, true);
+    assert.deepEqual(s.sinks, [
+      { name: "U0320", hw: "9A:03:CF:FC:40:A3", wfd: true, active: true },
+      { name: "Emilias 2. Fire TV Stick", hw: "C6:95:00:71:95:A3", wfd: false, active: false },
+      { name: "B\u00fcro: TV=neu", hw: "AA:BB:CC:DD:EE:FF", wfd: true, active: false }
+    ]);
+    assert.equal(s.sinks[2].name.codePointAt(1), 0xFC);
+  });
+
+  it("reports an empty scan distinctly from no scan", () => {
+    const empty = M.parseStatus(NMCLI_SCAN_EMPTY);
+    assert.equal(empty.hasSinks, true);
+    assert.deepEqual(empty.sinks, []);
+    const fast = M.parseStatus(NMCLI_IDLE);
+    assert.equal(fast.hasSinks, false);
+    assert.deepEqual(fast.sinks, []);
+  });
+
+  it("tolerates malformed sink lines", () => {
+    assert.deepEqual(M.parseSink(""), { name: "(unknown)", hw: "", wfd: false, active: false });
+    assert.deepEqual(M.parseSink("JustAName"), { name: "JustAName", hw: "", wfd: false, active: false });
+    assert.deepEqual(M.parseSink("\tAA:BB:CC:DD:EE:FF\t1\t0").name, "(unknown)");
+  });
+
+  it("badges the active sink, displays, and plain devices", () => {
+    const s = M.parseStatus(NMCLI_SCAN);
+    assert.equal(M.sinkBadge(s.sinks[0]), "Connected");
+    assert.equal(M.sinkBadge(s.sinks[1]), "Device");
+    assert.equal(M.sinkBadge(s.sinks[2]), "Display");
   });
 });
 

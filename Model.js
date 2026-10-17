@@ -2,10 +2,12 @@
 // loads both as a QML script (Panel.qml) and as a node module (Model.test.js).
 //
 // Status probe output is one "app=<running|stopped>" line, the output of
-// `nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status`, and the name
-// tier lines "alias_name=", "nm_name=", "mdns_name=". Terse mode
-// backslash-escapes literal ':' and '\' inside fields (e.g. the colons in
-// "Wi-Fi P2P Peer 9A:03:..."), so fields split on unescaped ':' only.
+// `nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status`, the name tier
+// lines, and -- in scan mode only -- a "sink_begin" marker plus one
+// tab-separated "sink=<name>\t<hw>\t<wfd>\t<active>" line per P2P peer.
+// Terse mode backslash-escapes literal ':' and '\' inside fields (e.g. the
+// colons in "Wi-Fi P2P Peer 9A:03:..."), so fields split on unescaped ':'
+// only.
 
 // Nerd Font icons (JetBrainsMono Nerd Font, verified in the installed file):
 // U+F0118 cast outline, U+F0119 cast with filled screen (connected).
@@ -23,7 +25,9 @@ function emptyStatus() {
     nmName: "",
     mdnsName: "",
     connected: false,
-    connecting: false
+    connecting: false,
+    sinks: [],
+    hasSinks: false
   }
 }
 
@@ -75,6 +79,19 @@ function peerNameLine(status, line) {
   return false
 }
 
+// Tab-separated by the probe so names may contain colons, spaces, and
+// non-ASCII unambiguously. Never throws; missing fields get safe defaults.
+function parseSink(body) {
+  var f = String(body === undefined || body === null ? "" : body).split("\t")
+  var name = (f[0] || "").trim()
+  return {
+    name: name === "" ? "(unknown)" : name,
+    hw: (f[1] || "").trim(),
+    wfd: f[2] === "1",
+    active: f[3] === "1"
+  }
+}
+
 function parseStatus(text) {
   var status = emptyStatus()
   var lines = String(text === undefined || text === null ? "" : text).split("\n")
@@ -86,6 +103,14 @@ function parseStatus(text) {
       continue
     }
     if (line === "app=stopped") continue
+    if (line === "sink_begin") {
+      status.hasSinks = true
+      continue
+    }
+    if (line.indexOf("sink=") === 0) {
+      status.sinks.push(parseSink(line.slice("sink=".length)))
+      continue
+    }
     if (peerNameLine(status, line)) continue
     var row = parseDeviceRow(line)
     if (row.type === "wifi-p2p" && status.p2pDevice === "") {
@@ -135,6 +160,14 @@ function linkText(status) {
   return "No P2P device"
 }
 
+// Right-hand badge for a discovered sink row.
+function sinkBadge(sink) {
+  var s = sink || {}
+  if (s.active) return "Connected"
+  if (s.wfd) return "Display"
+  return "Device"
+}
+
 function iconFor(status) {
   var s = status || emptyStatus()
   return s.connected ? ICON_CONNECTED : ICON_IDLE
@@ -147,8 +180,10 @@ if (typeof module !== "undefined") {
     emptyStatus: emptyStatus,
     splitTerse: splitTerse,
     parseDeviceRow: parseDeviceRow,
+    parseSink: parseSink,
     parseStatus: parseStatus,
     peerLabel: peerLabel,
+    sinkBadge: sinkBadge,
     statusText: statusText,
     tooltipText: tooltipText,
     linkText: linkText,

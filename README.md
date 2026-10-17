@@ -3,9 +3,11 @@
 Omarchy bar widget for Miracast screen sharing (`kili.miracast`).
 
 A cast icon in the top bar mirrors the sender state — idle, picker open,
-connecting, connected — and a click opens a tiny popup with the link status
-and one adaptive button: **Connect** (launch/focus the Network Displays
-picker) or **Disconnect** (quit the app, drop a lingering P2P link).
+connecting, connected — and a click opens a tiny popup with the link status,
+a scan of nearby displays (P2P discovery on open), and one adaptive button:
+**Connect** (launch/focus the Network Displays picker) or **Disconnect**
+(quit the app, drop a lingering P2P link). Clicking a display row opens the
+picker for manual selection.
 
 Sink selection itself still needs the app window: `gnome-network-displays`
 exposes no CLI or D-Bus connect API.
