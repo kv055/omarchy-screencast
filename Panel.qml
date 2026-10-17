@@ -278,12 +278,12 @@ Panel {
           }
         }
 
-        PanelSeparator {
-          foreground: root.bar.foreground
-        }
-
         Button {
           width: parent.width
+          // Rows are the connect action when sinks are listed; the button
+          // remains for tearing down a link or opening a blind picker.
+          visible: root.linkActive || root.sinks.length === 0
+          height: visible ? implicitHeight : 0
           text: root.linkActive ? (disconnectProc.running ? "Working..." : "Disconnect") : "Connect..."
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
