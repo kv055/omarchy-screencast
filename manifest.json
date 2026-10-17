@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "kili.miracast",
   "name": "Miracast",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "kili",
-  "description": "Miracast sender status with one-click picker and disconnect in the Omarchy bar.",
+  "description": "Miracast sender status with one-click windowless casting and disconnect in the Omarchy bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Miracast",
-    "description": "Show Miracast/P2P status, open the Network Displays picker, disconnect.",
+    "description": "Show Miracast/P2P status, cast to a sink with one click, disconnect.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right"

@@ -1,22 +1,25 @@
 #!/bin/sh
 # Miracast status probe. Usage: probe.sh [fast|scan]
 #
-# Emits one "app=<running|stopped>" line, the `nmcli -t` device block,
-# friendly peer-name tiers, a "known_begin" marker plus one tab-separated
-# "known=<mac>\t<epoch>\t<alias>\t<name>" line per history entry, and --
-# in scan mode only -- a P2P discovery sweep with a "sink_begin" marker
-# plus one tab-separated "sink=<name>\t<hw>\t<wfd>\t<active>" line per peer.
+# Emits one "app=<running|stopped>" line (a FluxCast WFD session process),
+# the `nmcli -t` device block, friendly peer-name tiers plus a
+# "peer_mac=<mac>" line (the P2P peer, resolved from the group interface
+# neighbors -- FluxCast names its NM link "FluxCast WFD" instead of
+# "Wi-Fi P2P Peer <MAC>"), a "known_begin" marker plus one tab-separated
+# "known=<mac>\t<epoch>\t\t<name>" line per history entry, and --
+# in scan mode only -- a `fluxcast --wfd-scan` sweep with a "sink_begin"
+# marker plus one tab-separated
+# "sink=<name>\t<hw>\t<wfd>\t<active>" line per peer.
 #
-# NOTE: the pgrep/pkill pattern uses the bracket trick so the probe never
-# matches its own command line. `pgrep -x` cannot match this app: the name
-# is longer than the 15-char comm limit. Keep the unbracketed literal out
-# of this file or the probe self-matches.
+# NOTE: the pgrep pattern uses the bracket trick so the probe never
+# matches its own command line: the regex needs a literal "wfd", but the
+# command line only ever holds "wf[d]". Keep the unbracketed literal out
+# of the pattern or the probe self-matches.
 mode=${1:-fast}
 
-PLUGIN_DIR="$HOME/.config/omarchy/plugins/kili.miracast"
 HIST="$HOME/.local/state/kili.miracast/history.tsv"
 
-if pgrep -f 'gnome-network-display[s]' >/dev/null 2>&1; then
+if pgrep -f 'protocol wf[d]' >/dev/null 2>&1; then
   echo app=running
 else
   echo app=stopped
@@ -29,14 +32,18 @@ echo "wifi=$wifi_state"
 out=$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status 2>/dev/null)
 printf '%s\n' "$out"
 
-line=$(printf '%s\n' "$out" | grep -m1 ':wifi-p2p:')
-rest=${line#*:wifi-p2p:*:}
-mac=$(printf '%s' "${rest##* }" | tr -d '\\')
+# First match wins: only one P2P group exists at a time, its interface
+# vanishes on teardown, and neighbours without lladdr (FAILED,
+# INCOMPLETE) never match, so this is the live peer or nothing.
+p2pif=$(iw dev 2>/dev/null | awk '$1=="Interface" && $2 ~ /^p2p-/{print $2; exit}')
+mac=""
+if [ -n "$p2pif" ]; then
+  mac=$(ip neigh show dev "$p2pif" 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="lladdr" && $(i+1) ~ /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/){print $(i+1); exit}}')
+fi
+echo "peer_mac=$mac"
 
-peers="$PLUGIN_DIR/peers.conf"
-alias_name=""; nm_name=""; mdns_name=""
+nm_name=""; mdns_name=""
 if [ -n "$mac" ]; then
-  [ -f "$peers" ] && alias_name=$(grep -i "^$mac=" "$peers" 2>/dev/null | head -n 1 | cut -d= -f2-)
   mac_up=$(printf '%s' "$mac" | tr 'a-z' 'A-Z')
   for pp in $(busctl --system tree org.freedesktop.NetworkManager 2>/dev/null | grep -o "/org/freedesktop/NetworkManager/WifiP2PPeer/[0-9]*"); do
     hw=$(busctl --system get-property org.freedesktop.NetworkManager "$pp" org.freedesktop.NetworkManager.WifiP2PPeer HwAddress 2>/dev/null | sed -n 's/^s "\(.*\)"$/\1/p')
@@ -46,7 +53,9 @@ if [ -n "$mac" ]; then
       break
     fi
   done
-  if [ -z "$alias_name" ]; then
+  # mDNS only matters when no P2P name resolved (the label prefers the
+  # P2P name), and its lookup can stall a full 2 s when mDNS blackholes.
+  if [ -z "$nm_name" ]; then
     ip=$(ip neigh 2>/dev/null | grep -i "$mac" | head -n 1 | awk '{print $1}')
     if [ -n "$ip" ]; then
       host=$(timeout 2 avahi-resolve-address "$ip" 2>/dev/null | awk '{print $2}')
@@ -54,7 +63,6 @@ if [ -n "$mac" ]; then
     fi
   fi
 fi
-echo "alias_name=$alias_name"
 echo "nm_name=$nm_name"
 echo "mdns_name=$mdns_name"
 
@@ -65,36 +73,36 @@ if [ -f "$HIST" ]; then
     h_mac=$(printf '%s\n' "$hline" | cut -f1)
     h_epoch=$(printf '%s\n' "$hline" | cut -f2)
     h_name=$(printf '%s\n' "$hline" | cut -f3-)
-    h_alias=""
-    if [ -n "$h_mac" ]; then
-      [ -f "$peers" ] && h_alias=$(grep -i "^$h_mac=" "$peers" 2>/dev/null | head -n 1 | cut -d= -f2-)
-    fi
-    printf 'known=%s\t%s\t%s\t%s\n' "$h_mac" "$h_epoch" "$h_alias" "$h_name"
+    printf 'known=%s\t%s\t\t%s\n' "$h_mac" "$h_epoch" "$h_name"
   done < "$HIST"
 fi
 
 if [ "$mode" = scan ]; then
   echo sink_begin
-  p2pdev=${line%%:*}
-  p2p_path=""
-  if [ -n "$p2pdev" ]; then
-    for dp in $(busctl --system tree org.freedesktop.NetworkManager 2>/dev/null | grep -o "/org/freedesktop/NetworkManager/Devices/[0-9]*"); do
-      iface=$(busctl --system get-property org.freedesktop.NetworkManager "$dp" org.freedesktop.NetworkManager.Device Interface 2>/dev/null | sed -n 's/^s "\(.*\)"$/\1/p')
-      if [ "$iface" = "$p2pdev" ]; then p2p_path=$dp; break; fi
-    done
-  fi
-  if [ -n "$p2p_path" ] && [ "$wifi_state" = enabled ]; then
-    busctl --system call org.freedesktop.NetworkManager "$p2p_path" org.freedesktop.NetworkManager.Device.WifiP2P StartFind a{sv} 0 >/dev/null 2>&1
-    sleep 6
-    for pp in $(busctl --system get-property org.freedesktop.NetworkManager "$p2p_path" org.freedesktop.NetworkManager.Device.WifiP2P Peers 2>/dev/null | grep -o "/org/freedesktop/NetworkManager/WifiP2PPeer/[0-9]*"); do
-      s_name=$(busctl --system get-property org.freedesktop.NetworkManager "$pp" org.freedesktop.NetworkManager.WifiP2PPeer Name 2>/dev/null | sed -n 's/^s "\(.*\)"$/\1/p')
-      s_hw=$(busctl --system get-property org.freedesktop.NetworkManager "$pp" org.freedesktop.NetworkManager.WifiP2PPeer HwAddress 2>/dev/null | sed -n 's/^s "\(.*\)"$/\1/p')
-      s_wfd_n=$(busctl --system get-property org.freedesktop.NetworkManager "$pp" org.freedesktop.NetworkManager.WifiP2PPeer WfdIEs 2>/dev/null | awk '{print $2}')
-      s_wfd=0; [ "$s_wfd_n" -gt 0 ] 2>/dev/null && s_wfd=1
-      s_active=0; s_hw_up=$(printf '%s' "$s_hw" | tr 'a-z' 'A-Z')
-      if [ -n "$mac_up" ] && [ "$s_hw_up" = "$mac_up" ]; then s_active=1; fi
-      printf 'sink=%s\t%s\t%s\t%s\n' "$s_name" "$s_hw" "$s_wfd" "$s_active"
-    done
-    busctl --system call org.freedesktop.NetworkManager "$p2p_path" org.freedesktop.NetworkManager.Device.WifiP2P StopFind >/dev/null 2>&1
+  if [ "$wifi_state" = enabled ] && command -v fluxcast >/dev/null 2>&1; then
+    fluxcast --wfd-scan --wfd-timeout 8 2>/dev/null | awk -v session_mac="$mac" '
+      #SINK_AWK_BEGIN
+      function emit() {
+        active = 0
+        if (session_mac != "" && toupper(mac) == toupper(session_mac)) active = 1
+        printf "sink=%s\t%s\t%d\t%d\n", name, mac, wfd, active
+      }
+      $0 ~ /^  \[[0-9]+\] / && $2 ~ /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/ {
+        if (mac != "") emit()
+        mac = $2
+        endfield = ($(NF-1) == "via") ? NF-2 : NF
+        name = ""
+        if (endfield >= 3) {
+          name = $3
+          for (i = 4; i <= endfield; i++) name = name " " $i
+        }
+        gsub(/\t/, " ", name)
+        wfd = 0
+        next
+      }
+      /^      WFD capability data detected/ { wfd = 1; next }
+      END { if (mac != "") emit() }
+      #SINK_AWK_END
+    '
   fi
 fi
