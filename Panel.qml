@@ -207,7 +207,7 @@ Panel {
 
         Item {
           width: parent.width
-          implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight)
+          implicitHeight: Math.max(heroIcon.implicitHeight, heroTitle.implicitHeight, heroStatus.implicitHeight)
 
           Text {
             id: heroIcon
@@ -220,36 +220,33 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
           }
 
-          Column {
-            id: heroLabels
+          Text {
+            id: heroTitle
+            text: "MIRACAST"
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
+            font.letterSpacing: 1.2
+            elide: Text.ElideRight
             anchors.left: heroIcon.right
             anchors.leftMargin: Style.space(12)
+            anchors.right: heroStatus.left
+            anchors.rightMargin: Style.space(10)
+            anchors.verticalCenter: parent.verticalCenter
+          }
+
+          Text {
+            id: heroStatus
+            textFormat: Text.PlainText
+            text: Model.statusText(root.status)
+            color: root.dimForeground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.letterSpacing: 1.2
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
-
-            Text {
-              text: "MIRACAST"
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-              font.letterSpacing: 1.2
-              elide: Text.ElideRight
-              width: parent.width
-            }
-
-            Text {
-              textFormat: Text.PlainText
-              text: Model.statusText(root.status)
-              color: root.dimForeground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              font.bold: true
-              font.letterSpacing: 1.2
-              elide: Text.ElideRight
-              width: parent.width
-            }
           }
         }
 
@@ -300,6 +297,12 @@ Panel {
             // the picker for manual selection, like Connect does.
             onActivated: root.openPicker()
           }
+        }
+
+        PanelSeparator {
+          visible: root.knownRows.length > 0
+          height: visible ? implicitHeight : 0
+          foreground: root.bar.foreground
         }
 
         PanelSectionHeader {
