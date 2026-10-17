@@ -25,8 +25,10 @@ Peer names resolve as: `peers.conf` alias → NetworkManager P2P device name
 
 ## Install
 
+This repo is the source of truth; the live plugin dir is a symlink to it:
+
 ```bash
-cp -r . ~/.config/omarchy/plugins/kili.miracast
+ln -s ~/LocalCodeBases/omarchy-miracast ~/.config/omarchy/plugins/kili.miracast
 # add {"id": "kili.miracast"} to the bar layout in ~/.config/omarchy/shell.json
 omarchy restart shell
 ```
