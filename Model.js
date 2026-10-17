@@ -1,4 +1,4 @@
-// Pure status parsing for the Miracast bar widget. No Qt imports: this file
+// Pure status parsing for the Screencast bar widget. No Qt imports: this file
 // loads both as a QML script (Panel.qml) and as a node module (Model.test.js).
 //
 // Status probe output is one "app=<running|stopped>" line (a FluxCast WFD
@@ -184,13 +184,13 @@ function tooltipText(status) {
   var s = status || emptyStatus()
   if (s.connected) {
     var label = peerLabel(s)
-    return label ? "Miracast: " + label : "Miracast connected"
+    return label ? "Screencast: " + label : "Screencast connected"
   }
-  if (s.connecting) return "Miracast connecting..."
-  if (!s.wifiOn) return "Miracast needs Wi-Fi - please turn it on"
-  if (s.appRunning) return "Miracast engine running - not connected"
-  if (!s.p2pDevice) return "Miracast unavailable (no P2P device)"
-  return "Miracast idle"
+  if (s.connecting) return "Screencast connecting..."
+  if (!s.wifiOn) return "Screencast needs Wi-Fi - please turn it on"
+  if (s.appRunning) return "Screencast engine running - not connected"
+  if (!s.p2pDevice) return "Screencast unavailable (no P2P device)"
+  return "Screencast idle"
 }
 
 function linkText(status) {

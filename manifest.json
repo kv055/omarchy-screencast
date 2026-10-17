@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "kili.miracast",
-  "name": "Miracast",
+  "id": "kili.screencast",
+  "name": "Screencast",
   "version": "2.0.0",
   "author": "kili",
-  "description": "Miracast sender status with one-click windowless casting and disconnect in the Omarchy bar.",
+  "description": "Screencast sender status with one-click windowless casting and disconnect in the Omarchy bar.",
   "kinds": [
     "bar-widget"
   ],
@@ -12,8 +12,8 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Miracast",
-    "description": "Show Miracast/P2P status, cast to a sink with one click, disconnect.",
+    "displayName": "Screencast",
+    "description": "Show Screencast/P2P status, cast to a sink with one click, disconnect.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right"

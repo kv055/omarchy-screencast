@@ -218,7 +218,7 @@ describe("fluxcast session", () => {
     assert.equal(M.peerLabel(s), "U0320");
     assert.equal(M.linkText(s), "U0320");
     assert.equal(M.heroStatus(s, false), "Connected");
-    assert.equal(M.tooltipText(s), "Miracast: U0320");
+    assert.equal(M.tooltipText(s), "Screencast: U0320");
   });
 
   it("prefers the peer MAC line over the legacy peer string", () => {
@@ -328,7 +328,7 @@ describe("scan parser", () => {
   }
 
   function runScan(fixture, sessionMac) {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "miracast-scan-"));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "screencast-scan-"));
     const prog = path.join(dir, "sink.awk");
     fs.writeFileSync(prog, probeAwk());
     try {
@@ -541,7 +541,7 @@ describe("wifi off", () => {
       assert.equal(s.wifiOn, false);
       assert.equal(M.heroStatus(s, false), "Disconnected");
       assert.equal(M.linkText(s), "Please turn on Wi-Fi to use casting");
-      assert.equal(M.tooltipText(s), "Miracast needs Wi-Fi - please turn it on");
+      assert.equal(M.tooltipText(s), "Screencast needs Wi-Fi - please turn it on");
     }
     const withRow = M.parseStatus(OFF("p2p-dev-wlp0s20f3:wifi-p2p:unavailable:"));
     assert.equal(withRow.p2pDevice, "p2p-dev-wlp0s20f3");
@@ -578,22 +578,22 @@ describe("display helpers", () => {
   it("names the peer in the connected tooltip", () => {
     assert.equal(
       M.tooltipText(M.parseStatus(NMCLI_CONNECTED_NAMED)),
-      "Miracast: U0320"
+      "Screencast: U0320"
     );
     assert.equal(
       M.tooltipText(M.parseStatus(NMCLI_CONNECTED)),
-      "Miracast: Wi-Fi P2P Peer AA:BB:CC:DD:EE:FF"
+      "Screencast: Wi-Fi P2P Peer AA:BB:CC:DD:EE:FF"
     );
     assert.equal(
       M.tooltipText(M.parseStatus(NMCLI_CONNECTING)),
-      "Miracast connecting..."
+      "Screencast connecting..."
     );
   });
 
   it("names the running engine without a link", () => {
     assert.equal(
       M.tooltipText(M.parseStatus(NMCLI_ENGINE_RUNNING)),
-      "Miracast engine running - not connected"
+      "Screencast engine running - not connected"
     );
   });
 

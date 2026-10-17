@@ -1,13 +1,13 @@
-# omarchy-miracast
+# omarchy-screencast
 
-Omarchy bar widget for Miracast screen sharing (`kili.miracast`), driven by
+Omarchy bar widget for Screencast screen sharing (`kili.screencast`), driven by
 [FluxCast](https://github.com/IlyaP358/fluxcast).
 
 A cast icon in the top bar mirrors the sender state — idle, connecting,
 connected — and a click opens a tiny popup with the link status, available
 displays (FluxCast Wi-Fi Direct discovery on open) and previously connected
 displays (connection history in
-`~/.local/state/kili.miracast/history.tsv`, recorded on connect). Clicking a
+`~/.local/state/kili.screencast/history.tsv`, recorded on connect). Clicking a
 row starts a windowless cast straight to that sink — sink selection happens
 in the popup, no external window opens. The standalone button appears while
 a link is up or the engine is running (**Disconnect**, which stops the
@@ -49,8 +49,8 @@ sudo ufw allow 7236/tcp  # only if ufw is active
 This repo is the source of truth; the live plugin dir is a symlink to it:
 
 ```bash
-ln -s ~/LocalCodeBases/omarchy-miracast ~/.config/omarchy/plugins/kili.miracast
-# add {"id": "kili.miracast"} to the bar layout in ~/.config/omarchy/shell.json
+ln -s ~/LocalCodeBases/omarchy-screencast ~/.config/omarchy/plugins/kili.screencast
+# add {"id": "kili.screencast"} to the bar layout in ~/.config/omarchy/shell.json
 omarchy restart shell
 ```
 
@@ -66,9 +66,9 @@ The widget answers scripted control over the shell bus — the same code
 paths as popup clicks — which the OMCP tools wrap:
 
 ```bash
-omarchy-shell kili.miracast status                    # JSON: connected, connecting, engine, wifi, peer
-omarchy-shell kili.miracast connect 9A:03:CF:FC:40:A3 # peer MAC or device-name substring
-omarchy-shell kili.miracast disconnect
+omarchy-shell kili.screencast status                    # JSON: connected, connecting, engine, wifi, peer
+omarchy-shell kili.screencast connect 9A:03:CF:FC:40:A3 # peer MAC or device-name substring
+omarchy-shell kili.screencast disconnect
 ```
 
 `connect` answers `{"ok":true}` once the session is launched — poll
@@ -86,5 +86,8 @@ omarchy-shell kili.miracast disconnect
 - Disconnect signals the engine with SIGINT first so FluxCast runs its own
   cleanup (media stop, link deactivation), then drops any lingering P2P
   link via `nmcli`.
-- Only one WFD source can hold RTSP port 7236: quit any other Miracast
+- Renaming from `kili.miracast` moves state to
+  `~/.local/state/kili.screencast/`; move `history.tsv` across to keep
+  Previous Connections.
+- Only one WFD source can hold RTSP port 7236: quit any other Screencast
   sender before connecting.

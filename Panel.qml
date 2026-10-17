@@ -5,7 +5,7 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Miracast quick menu: the bar icon mirrors the sender state (idle,
+// Screencast quick menu: the bar icon mirrors the sender state (idle,
 // connecting, P2P connected) and the popup lists nearby displays
 // (FluxCast Wi-Fi Direct discovery on open) and known displays (connection
 // history). Clicking a row starts a windowless `fluxcast --protocol wfd`
@@ -13,8 +13,8 @@ import "Model.js" as Model
 // engine and drops a lingering P2P link.
 Panel {
   id: root
-  moduleName: "kili.miracast"
-  ipcTarget: "kili.miracast"
+  moduleName: "kili.screencast"
+  ipcTarget: "kili.screencast"
 
   property var status: Model.emptyStatus()
   property var sinks: []
@@ -49,7 +49,7 @@ Panel {
     scanning = scan
     if (scan) animFrame = 0
     probeSeq = probeSeq + 1
-    statusProc.command = ["sh", "-c", "\"$HOME/.config/omarchy/plugins/kili.miracast/probe.sh\" " + (scan ? "scan" : "fast")]
+    statusProc.command = ["sh", "-c", "\"$HOME/.config/omarchy/plugins/kili.screencast/probe.sh\" " + (scan ? "scan" : "fast")]
     statusProc.running = true
   }
 
@@ -90,7 +90,7 @@ Panel {
   // file, which simply delays the new entry by one tick.
   function recordPeer(mac, name) {
     var epoch = Math.floor(Date.now() / 1000)
-    var hist = "$HOME/.local/state/kili.miracast/history.tsv"
+    var hist = "$HOME/.local/state/kili.screencast/history.tsv"
     var script = "f=\"" + hist + "\"; mkdir -p \"${f%/*}\"; touch \"$f\"; "
       + "nm=" + Model.shQuote(name) + "; "
       + "nm=$(printf '%s' \"$nm\" | tr -d '\\t\\n'); "
@@ -152,7 +152,7 @@ Panel {
   // only while the popup is open; the background tick uses the fast mode.
   Process {
     id: statusProc
-    command: ["sh", "-c", "\"$HOME/.config/omarchy/plugins/kili.miracast/probe.sh\" fast"]
+    command: ["sh", "-c", "\"$HOME/.config/omarchy/plugins/kili.screencast/probe.sh\" fast"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateStatus(text) }
   }
 
@@ -215,7 +215,7 @@ Panel {
   }
 
   // Scripted control for agents (OMCP tools call these over
-  // `omarchy-shell kili.miracast <verb>`). Same code paths as popup
+  // `omarchy-shell kili.screencast <verb>`). Same code paths as popup
   // clicks; every verb answers a JSON object.
   IpcHandler {
     target: root.ipcTarget
@@ -361,7 +361,7 @@ Panel {
 
           Text {
             id: heroTitle
-            text: "MIRACAST"
+            text: "SCREENCAST"
             color: root.bar.foreground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.title

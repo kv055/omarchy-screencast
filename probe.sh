@@ -1,5 +1,5 @@
 #!/bin/sh
-# Miracast status probe. Usage: probe.sh [fast|scan]
+# Screencast status probe. Usage: probe.sh [fast|scan]
 #
 # Emits one "app=<running|stopped>" line (a FluxCast WFD session process),
 # the `nmcli -t` device block, friendly peer-name tiers plus a
@@ -17,7 +17,7 @@
 # of the pattern or the probe self-matches.
 mode=${1:-fast}
 
-HIST="$HOME/.local/state/kili.miracast/history.tsv"
+HIST="$HOME/.local/state/kili.screencast/history.tsv"
 
 if pgrep -f 'protocol wf[d]' >/dev/null 2>&1; then
   echo app=running
