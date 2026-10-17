@@ -613,6 +613,15 @@ describe("display helpers", () => {
     assert.equal(M.linkText(M.parseStatus(NMCLI_NO_P2P)), "");
   });
 
+  it("reaps only a linkless engine past the grace period", () => {
+    assert.equal(M.LINKLESS_REAP_MS, 90000);
+    assert.equal(M.shouldReapLinkless(0), false);
+    assert.equal(M.shouldReapLinkless(89999), false);
+    assert.equal(M.shouldReapLinkless(90000), true);
+    assert.equal(M.shouldReapLinkless(300000), true);
+    assert.equal(M.shouldReapLinkless(undefined), false);
+  });
+
   it("pins the verified Nerd Font codepoints", () => {
     assert.equal(M.ICON_IDLE.codePointAt(0), 0xF0118);
     assert.equal(M.ICON_CONNECTED.codePointAt(0), 0xF0119);

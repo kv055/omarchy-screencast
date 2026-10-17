@@ -10,8 +10,10 @@ displays (connection history in
 `~/.local/state/kili.screencast/history.tsv`, recorded on connect). Clicking a
 row starts a windowless cast straight to that sink — sink selection happens
 in the popup, no external window opens. The standalone button appears while
-a link is up or the engine is running (**Disconnect**, which stops the
-FluxCast session and drops a lingering P2P link).
+a link is up, a connect is outstanding, or a disconnect is running
+(**Disconnect**, which stops the FluxCast session and drops a lingering P2P
+link). It never shows on a Disconnected popup: a widget-started engine that
+stays linkless for 90 s is stuck, so the widget reaps it automatically.
 
 ## Files
 

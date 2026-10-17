@@ -26,6 +26,15 @@ var ICON_CONNECTED = "󰄙"
 // needs a literal "wfd", but the command line only ever holds "wf[d]".
 var ENGINE_PATTERN = "protocol wf[d]"
 
+// A widget-started engine that stays linkless this long is stuck: a healthy
+// link comes up in well under a minute. The widget reaps it instead of
+// leaving a Disconnect button on a Disconnected popup.
+var LINKLESS_REAP_MS = 90000
+
+function shouldReapLinkless(linklessMs) {
+  return Number(linklessMs) >= LINKLESS_REAP_MS
+}
+
 function emptyStatus() {
   return {
     appRunning: false,
@@ -413,6 +422,8 @@ if (typeof module !== "undefined") {
     tooltipText: tooltipText,
     linkText: linkText,
     dots: dots,
-    iconFor: iconFor
+    iconFor: iconFor,
+    LINKLESS_REAP_MS: LINKLESS_REAP_MS,
+    shouldReapLinkless: shouldReapLinkless
   }
 }

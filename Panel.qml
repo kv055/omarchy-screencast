@@ -22,6 +22,12 @@ Panel {
   property int animFrame: 0
   property bool pendingConnect: false
   property string pendingPeer: ""
+  // True when the running engine was started by this widget (popup click
+  // or IPC connect). Only our own linkless-stuck engine is auto-reaped;
+  // an externally started one is left alone.
+  property bool ownEngine: false
+  // Epoch ms when the engine was first seen linkless (0 = none).
+  property double linklessSince: 0
   property bool wasConnected: false
   // Probe generations: a completion only judges a click when a probe
   // launched after that click completed, so stale in-flight results
@@ -62,6 +68,23 @@ Panel {
     }
     wasConnected = parsed.connected
     status = parsed
+    // Reap our own engine when it stays linkless past the grace period:
+    // no link in that long means stuck, and the Disconnected popup shows
+    // no Disconnect button, so nothing else could clear it. The timer
+    // runs during "Connecting..." too but only fires once progress is
+    // over, and an externally started engine is never touched.
+    if (!parsed.appRunning) {
+      ownEngine = false
+      linklessSince = 0
+    } else if (parsed.connected) {
+      linklessSince = 0
+    } else if (linklessSince === 0) {
+      linklessSince = Date.now()
+    } else if (ownEngine && !pendingConnect && !disconnectProc.running
+        && Model.shouldReapLinkless(Date.now() - linklessSince)) {
+      linklessSince = 0
+      root.disconnect()
+    }
     if (parsed.connected) {
       pendingConnect = false
     } else if (pendingConnect) {
@@ -115,6 +138,8 @@ Panel {
     pendingPeer = (display === "" || display === "(unknown)") ? selector : display
     pendingSeq = probeSeq
     pendingConnect = true
+    ownEngine = true
+    linklessSince = 0
     animFrame = 0
     pendingTimer.restart()
     Quickshell.execDetached(Model.connectCommand(selector))
@@ -476,9 +501,10 @@ Panel {
           width: parent.width
           // Rows are the connect action; the button stops the engine
           // and/or tears down a link -- including a pending click,
-          // where it acts as cancel, and an engine whose link died
-          // underneath it, which would otherwise block new clicks.
-          visible: root.linkActive || root.appRunning || root.pendingConnect
+          // where it acts as cancel. It never shows on a Disconnected
+          // popup: a linkless-stuck engine is auto-reaped instead (see
+          // updateStatus), so nothing needs a manual button there.
+          visible: root.linkActive || root.pendingConnect || disconnectProc.running
           height: visible ? implicitHeight : 0
           text: disconnectProc.running ? "Disconnecting" + Model.dots(root.animFrame) : "Disconnect"
           foreground: root.bar.foreground
