@@ -317,8 +317,8 @@ describe("display helpers", () => {
   it("labels each state", () => {
     assert.equal(M.statusText(M.parseStatus(NMCLI_CONNECTED)), "Connected");
     assert.equal(M.statusText(M.parseStatus(NMCLI_CONNECTING)), "Connecting...");
-    assert.equal(M.statusText(M.parseStatus(NMCLI_PICKER_OPEN)), "Picker open");
-    assert.equal(M.statusText(M.parseStatus(NMCLI_IDLE)), "Idle");
+    assert.equal(M.statusText(M.parseStatus(NMCLI_PICKER_OPEN)), "Disconnected");
+    assert.equal(M.statusText(M.parseStatus(NMCLI_IDLE)), "Disconnected");
     assert.equal(M.statusText(M.parseStatus(NMCLI_NO_P2P)), "No P2P device");
   });
 
@@ -360,9 +360,9 @@ describe("display helpers", () => {
       M.linkText(M.parseStatus(NMCLI_CONNECTING)),
       "Wi-Fi P2P Peer AA:BB:CC:DD:EE:FF"
     );
-    assert.equal(M.linkText(M.parseStatus(NMCLI_IDLE)), "Disconnected");
-    assert.equal(M.linkText(M.parseStatus(NMCLI_UNAVAILABLE)), "Unavailable");
-    assert.equal(M.linkText(M.parseStatus(NMCLI_NO_P2P)), "No P2P device");
+    assert.equal(M.linkText(M.parseStatus(NMCLI_IDLE)), "");
+    assert.equal(M.linkText(M.parseStatus(NMCLI_UNAVAILABLE)), "");
+    assert.equal(M.linkText(M.parseStatus(NMCLI_NO_P2P)), "");
   });
 
   it("pins the verified Nerd Font codepoints", () => {

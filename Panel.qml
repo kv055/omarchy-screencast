@@ -240,7 +240,7 @@ Panel {
             id: heroStatus
             textFormat: Text.PlainText
             text: Model.statusText(root.status)
-            color: root.dimForeground
+            color: root.connected ? Color.accent : root.dimForeground
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -252,6 +252,8 @@ Panel {
 
         Text {
           textFormat: Text.PlainText
+          visible: Model.linkText(root.status) !== ""
+          height: visible ? implicitHeight : 0
           text: Model.linkText(root.status)
           color: root.dimForeground
           font.family: root.bar.fontFamily

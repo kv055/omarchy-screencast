@@ -154,18 +154,12 @@ function peerLabel(status) {
   return s.aliasName || s.nmName || s.mdnsName || s.peer || ""
 }
 
-function capitalize(word) {
-  var w = String(word === undefined || word === null ? "" : word)
-  return w === "" ? w : w.charAt(0).toUpperCase() + w.slice(1)
-}
-
 function statusText(status) {
   var s = status || emptyStatus()
   if (s.connected) return "Connected"
   if (s.connecting) return "Connecting..."
-  if (s.appRunning) return "Picker open"
   if (!s.p2pDevice) return "No P2P device"
-  return "Idle"
+  return "Disconnected"
 }
 
 function tooltipText(status) {
@@ -184,8 +178,7 @@ function linkText(status) {
   var s = status || emptyStatus()
   if (s.connected) return peerLabel(s) || "Connected"
   if (s.connecting) return peerLabel(s) || "Connecting"
-  if (s.p2pDevice) return capitalize(s.p2pState || "unknown")
-  return "No P2P device"
+  return ""
 }
 
 // Right-hand badge for a discovered sink row.
@@ -271,7 +264,6 @@ if (typeof module !== "undefined") {
     parseKnown: parseKnown,
     parseStatus: parseStatus,
     peerLabel: peerLabel,
-    capitalize: capitalize,
     sinkBadge: sinkBadge,
     relTime: relTime,
     knownRows: knownRows,
