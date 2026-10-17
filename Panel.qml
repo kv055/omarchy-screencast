@@ -29,6 +29,12 @@ Panel {
   // invitation sometimes forms no group, while an identical retry
   // succeeds. Consumed by the retry; a manual Disconnect disarms it.
   property bool retryArmed: false
+  // Whether the current click's attempt ever got a link. Recovery only
+  // applies to attempts that never connected: re-casting after a real
+  // session dropped would be a surprise.
+  property bool attemptLinked: false
+  // Epoch ms when the link came up without video (0 = video or no link).
+  property double waitingSince: 0
   // True when the running engine was started by this widget (popup click
   // or IPC connect). Only our own linkless-stuck engine is auto-reaped;
   // an externally started one is left alone.
@@ -96,28 +102,60 @@ Panel {
     } else if (linklessSince === 0) {
       linklessSince = Date.now()
     } else if (ownEngine && !pendingConnect && !disconnectProc.running
+        && !recoveryTimer.running
         && Model.shouldReapLinkless(Date.now() - linklessSince)) {
       linklessSince = 0
-      root.disconnect()
+      // A never-linked attempt whose engine wedged linkless gets the
+      // same recovery as a dead one; a post-session engine just reaps.
+      if (root.retryArmed && !root.attemptLinked && root.pendingSelector !== "") {
+        retryArmed = false
+        pendingConnect = true
+        pendingSeq = probeSeq
+        pendingTimer.restart()
+        root.disconnect()
+        recoveryTimer.restart()
+      } else {
+        root.disconnect()
+      }
     }
+    if (!parsed.connected) root.waitingSince = 0
     if (parsed.connected) {
       pendingConnect = false
+      attemptLinked = true
+      if (parsed.video) {
+        // The attempt succeeded; no recovery may fire for it later.
+        retryArmed = false
+        waitingSince = 0
+      } else if (root.retryArmed && root.pendingSelector !== "" && !recoveryTimer.running) {
+        // Link up, no video: the sink's display app missed its trigger
+        // and never starts on its own (observed for minutes). After a
+        // patient wait, tear down and retry once instead of hanging.
+        if (root.waitingSince === 0) root.waitingSince = Date.now()
+        else if (Model.shouldRecoverWaiting(Date.now() - root.waitingSince)) {
+          root.waitingSince = 0
+          retryArmed = false
+          pendingConnect = true
+          pendingSeq = probeSeq
+          pendingTimer.restart()
+          root.disconnect()
+          recoveryTimer.restart()
+        }
+      }
     } else if (pendingConnect) {
       // Slow legitimate connects (scan retries plus NM activation) can
       // outlast the give-up timer, so a live handshake extends it.
       if (parsed.connecting) pendingTimer.restart()
-      else if (doneSeq > pendingSeq && !parsed.appRunning) {
+      else if (doneSeq > pendingSeq && !parsed.appRunning && !recoveryTimer.running) {
         // Our engine died before any link: the sink accepted the
         // invitation but the group handshake collapsed (its own logs
-        // show an identical retry succeeding). Retry once with the
-        // same peer; only then fall back to a rescan. connectTo
-        // refuses while pendingConnect is set, so clear it first.
+        // show an identical retry succeeding). Retry once, after a
+        // settle pause -- relaunching into the same instant repeats
+        // the failure. pendingConnect stays set: the click is still
+        // outstanding, and Disconnect cancels the pending retry.
         if (root.retryArmed && root.pendingSelector !== "") {
-          var sel = root.pendingSelector
-          var label = root.pendingPeer
-          pendingConnect = false
           retryArmed = false
-          root.connectTo(sel, label)
+          pendingTimer.restart()
+          recoveryTimer.restart()
         } else {
           pendingConnect = false
           refresh(true)
@@ -164,6 +202,8 @@ Panel {
     pendingPeer = (display === "" || display === "(unknown)") ? selector : display
     pendingSelector = selector
     retryArmed = true
+    attemptLinked = false
+    waitingSince = 0
     pendingSeq = probeSeq
     pendingConnect = true
     ownEngine = true
@@ -191,6 +231,8 @@ Panel {
     if (disconnectProc.running) return
     pendingConnect = false
     retryArmed = false
+    waitingSince = 0
+    recoveryTimer.stop()
     pendingTimer.stop()
     animFrame = 0
     disconnectProc.running = true
@@ -271,6 +313,31 @@ Panel {
     id: pendingTimer
     interval: 45000
     onTriggered: if (!root.connected) root.pendingConnect = false
+  }
+
+  // The one automatic retry, after a settle pause: relaunching into the
+  // same instant the previous handshake died just repeats it. Fires only
+  // while the click is still outstanding; connectTo refuses while busy,
+  // so a still-dropping link re-arms briefly instead of losing the retry.
+  // retryArmed is cleared after the launch: connectTo arms it again for
+  // the new attempt, which would otherwise retry forever.
+  Timer {
+    id: recoveryTimer
+    interval: Model.RECOVERY_DELAY_MS
+    onTriggered: {
+      if (!root.pendingConnect || root.pendingSelector === "") return
+      if (root.appRunning || root.linkActive || disconnectProc.running) {
+        interval = 2000
+        restart()
+        return
+      }
+      interval = Model.RECOVERY_DELAY_MS
+      // connectTo refuses while the click is outstanding; clear it for
+      // the relaunch (it sets it again itself).
+      root.pendingConnect = false
+      root.connectTo(root.pendingSelector, root.pendingPeer)
+      root.retryArmed = false
+    }
   }
 
   // Scripted control for agents (OMCP tools call these over

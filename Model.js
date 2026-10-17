@@ -31,6 +31,21 @@ var ENGINE_PATTERN = "protocol wf[d]"
 // leaving a Disconnect button on a Disconnected popup.
 var LINKLESS_REAP_MS = 90000
 
+// Settle pause before the one automatic retry: relaunching into the same
+// instant the previous handshake died just repeats it -- the sink's own
+// logs show its successful retries tens of seconds apart.
+var RECOVERY_DELAY_MS = 10000
+
+// Link up but no video for this long means the sink's display app missed
+// its trigger; it never starts on its own (observed for minutes). The
+// widget tears the session down and retries once instead of waiting
+// forever. Healthy video starts within seconds of the link.
+var WAITING_VIDEO_MS = 60000
+
+function shouldRecoverWaiting(waitingMs) {
+  return Number(waitingMs) >= WAITING_VIDEO_MS
+}
+
 function shouldReapLinkless(linklessMs) {
   return Number(linklessMs) >= LINKLESS_REAP_MS
 }
@@ -441,6 +456,9 @@ if (typeof module !== "undefined") {
     dots: dots,
     iconFor: iconFor,
     LINKLESS_REAP_MS: LINKLESS_REAP_MS,
-    shouldReapLinkless: shouldReapLinkless
+    shouldReapLinkless: shouldReapLinkless,
+    RECOVERY_DELAY_MS: RECOVERY_DELAY_MS,
+    WAITING_VIDEO_MS: WAITING_VIDEO_MS,
+    shouldRecoverWaiting: shouldRecoverWaiting
   }
 }

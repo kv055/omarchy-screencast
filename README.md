@@ -19,12 +19,15 @@ A link is not a cast: the sink joins the P2P group first and starts its
 video session after (or never, when it missed our discovery). A link
 without video reads as **Waiting**, with dots, instead of a false
 Connected. Scans are suppressed while a connect is outstanding — a full
-scan takes the radio off-channel and collapses the handshake — and if our
-engine dies before any link, the widget retries the connect once before
-giving up: the sink's own logs show an accepted invitation sometimes forms
-no group while an identical retry succeeds. Every engine run appends its
-output to `~/.local/state/kili.screencast/fluxcast.log` (trimmed to 200
-lines), the only record of the handshake once the widget moves on.
+scan takes the radio off-channel and collapses the handshake. If the
+attempt fails — the engine dies before any link, wedges linkless, or the
+link comes up but video never starts within a minute — the widget tears
+it down, waits 10 s, and retries the connect once: the sink's own logs
+show an accepted invitation sometimes forms no group while an identical
+retry succeeds, and a missed video trigger never recovers by waiting.
+Disconnect during the pause cancels the retry. Every engine run appends
+its output to `~/.local/state/kili.screencast/fluxcast.log` (trimmed to
+200 lines), the only record of the handshake once the widget moves on.
 
 ## Files
 

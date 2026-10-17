@@ -673,6 +673,16 @@ describe("display helpers", () => {
     assert.equal(M.shouldReapLinkless(undefined), false);
   });
 
+  it("paces recovery: delayed retry, patient waiting threshold", () => {
+    assert.equal(M.RECOVERY_DELAY_MS, 10000);
+    assert.equal(M.WAITING_VIDEO_MS, 60000);
+    assert.equal(M.shouldRecoverWaiting(0), false);
+    assert.equal(M.shouldRecoverWaiting(59999), false);
+    assert.equal(M.shouldRecoverWaiting(60000), true);
+    assert.equal(M.shouldRecoverWaiting(600000), true);
+    assert.equal(M.shouldRecoverWaiting(undefined), false);
+  });
+
   it("pins the verified Nerd Font codepoints", () => {
     assert.equal(M.ICON_IDLE.codePointAt(0), 0xF0118);
     assert.equal(M.ICON_CONNECTED.codePointAt(0), 0xF0119);
