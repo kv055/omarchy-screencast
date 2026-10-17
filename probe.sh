@@ -22,6 +22,10 @@ else
   echo app=stopped
 fi
 
+wifi_state=enabled
+[ "$(nmcli radio wifi 2>/dev/null)" = disabled ] && wifi_state=disabled
+echo "wifi=$wifi_state"
+
 out=$(nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status 2>/dev/null)
 printf '%s\n' "$out"
 
@@ -79,7 +83,7 @@ if [ "$mode" = scan ]; then
       if [ "$iface" = "$p2pdev" ]; then p2p_path=$dp; break; fi
     done
   fi
-  if [ -n "$p2p_path" ]; then
+  if [ -n "$p2p_path" ] && [ "$wifi_state" = enabled ]; then
     busctl --system call org.freedesktop.NetworkManager "$p2p_path" org.freedesktop.NetworkManager.Device.WifiP2P StartFind a{sv} 0 >/dev/null 2>&1
     sleep 6
     for pp in $(busctl --system get-property org.freedesktop.NetworkManager "$p2p_path" org.freedesktop.NetworkManager.Device.WifiP2P Peers 2>/dev/null | grep -o "/org/freedesktop/NetworkManager/WifiP2PPeer/[0-9]*"); do

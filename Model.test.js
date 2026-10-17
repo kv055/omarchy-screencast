@@ -144,6 +144,7 @@ describe("parseStatus", () => {
       mdnsName: "",
       connected: true,
       connecting: false,
+      wifiOn: true,
       sinks: [],
       hasSinks: false,
       knownRaw: [
@@ -310,6 +311,31 @@ describe("known displays", () => {
   it("shell-quotes history names", () => {
     assert.equal(M.shQuote("Beamer"), "'Beamer'");
     assert.equal(M.shQuote("Emilia's TV"), "'Emilia'\\''s TV'");
+  });
+});
+
+describe("wifi off", () => {
+  const OFF = (p2pLine) =>
+    "app=stopped\n" +
+    (p2pLine ? p2pLine + "\n" : "") +
+    "wifi=disabled\n" +
+    "alias_name=\n" +
+    "nm_name=\n" +
+    "mdns_name=\n" +
+    "known_begin\n";
+
+  it("names wifi as the cause with or without a p2p row", () => {
+    for (const body of [OFF(""), OFF("p2p-dev-wlp0s20f3:wifi-p2p:unavailable:")]) {
+      const s = M.parseStatus(body);
+      assert.equal(s.wifiOn, false);
+      assert.equal(M.statusText(s), "Wi-Fi off");
+      assert.equal(M.linkText(s), "Please turn on Wi-Fi to use casting");
+      assert.equal(M.tooltipText(s), "Miracast needs Wi-Fi - please turn it on");
+    }
+  });
+
+  it("assumes wifi on when the probe omits the line", () => {
+    assert.equal(M.parseStatus(NMCLI_IDLE).wifiOn, true);
   });
 });
 

@@ -27,6 +27,7 @@ function emptyStatus() {
     mdnsName: "",
     connected: false,
     connecting: false,
+    wifiOn: true,
     sinks: [],
     hasSinks: false,
     knownRaw: []
@@ -120,6 +121,11 @@ function parseStatus(text) {
       continue
     }
     if (line === "app=stopped") continue
+    if (line === "wifi=disabled") {
+      status.wifiOn = false
+      continue
+    }
+    if (line === "wifi=enabled") continue
     if (line === "sink_begin") {
       status.hasSinks = true
       continue
@@ -158,6 +164,7 @@ function statusText(status) {
   var s = status || emptyStatus()
   if (s.connected) return "Connected"
   if (s.connecting) return "Connecting..."
+  if (!s.wifiOn) return "Wi-Fi off"
   if (!s.p2pDevice) return "No P2P device"
   return "Disconnected"
 }
@@ -169,6 +176,7 @@ function tooltipText(status) {
     return label ? "Miracast: " + label : "Miracast connected"
   }
   if (s.connecting) return "Miracast connecting..."
+  if (!s.wifiOn) return "Miracast needs Wi-Fi - please turn it on"
   if (s.appRunning) return "Miracast picker open - not connected"
   if (!s.p2pDevice) return "Miracast unavailable (no P2P device)"
   return "Miracast idle"
@@ -178,6 +186,7 @@ function linkText(status) {
   var s = status || emptyStatus()
   if (s.connected) return peerLabel(s) || "Connected"
   if (s.connecting) return peerLabel(s) || "Connecting"
+  if (!s.wifiOn) return "Please turn on Wi-Fi to use casting"
   return ""
 }
 
