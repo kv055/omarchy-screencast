@@ -90,6 +90,20 @@ const FLUXCAST_CONNECTED =
   "nm_name=U0320\n" +
   "mdns_name=\n" +
   "peer_mac=9A:03:CF:FC:40:A3\n" +
+  "video=yes\n" +
+  "known_begin\n" +
+  "known=9A:03:CF:FC:40:A3\t1792223000\t\tU0320\n";
+
+// Same link but the sink never started its video session: joined the P2P
+// group, no established RTSP. Must read as Waiting, not Connected.
+const FLUXCAST_WAITING =
+  "app=running\n" +
+  "wlp0s20f3:wifi:connected:Ludalan&DaniDauerlan\n" +
+  "p2p-dev-wlp0s20f3:wifi-p2p:connected:FluxCast WFD\n" +
+  "nm_name=U0320\n" +
+  "mdns_name=\n" +
+  "peer_mac=9A:03:CF:FC:40:A3\n" +
+  "video=no\n" +
   "known_begin\n" +
   "known=9A:03:CF:FC:40:A3\t1792223000\t\tU0320\n";
 
@@ -153,6 +167,7 @@ describe("parseStatus", () => {
       peerMac: "",
       connected: true,
       connecting: false,
+      video: false,
       wifiOn: true,
       sinks: [],
       hasSinks: false,
@@ -506,6 +521,13 @@ describe("engine commands", () => {
     assert.match(cmd[2], /<\/dev\/null/);
   });
 
+  it("tees engine output to a trimmed log for post-mortems", () => {
+    const cmd = M.connectCommand("9A:03:CF:FC:40:A3");
+    assert.match(cmd[2], /fluxcast\.log/);
+    assert.match(cmd[2], /tee -a/);
+    assert.match(cmd[2], /tail -n 200/);
+  });
+
   it("quotes a hostile peer selector safely", () => {
     const evil = "x'; touch /tmp/pwned; echo '";
     const cmd = M.connectCommand(evil);
@@ -555,7 +577,8 @@ describe("wifi off", () => {
 
 describe("display helpers", () => {
   it("shows Connected, Disconnected, or nothing while busy", () => {
-    assert.equal(M.heroStatus(M.parseStatus(NMCLI_CONNECTED), false), "Connected");
+    assert.equal(M.heroStatus(M.parseStatus(FLUXCAST_CONNECTED), false), "Connected");
+    assert.equal(M.heroStatus(M.parseStatus(NMCLI_CONNECTED), false), "Waiting");
     assert.equal(M.heroStatus(M.parseStatus(NMCLI_CONNECTED), true), "");
     assert.equal(M.heroStatus(M.parseStatus(NMCLI_CONNECTING), true), "");
     assert.equal(M.heroStatus(M.parseStatus(NMCLI_ENGINE_RUNNING), false), "Disconnected");
@@ -563,6 +586,27 @@ describe("display helpers", () => {
     assert.equal(M.heroStatus(M.parseStatus(NMCLI_IDLE), true), "");
     assert.equal(M.heroStatus(M.parseStatus(NMCLI_NO_P2P), false), "Disconnected");
     assert.equal(M.heroStatus(null, false), "Disconnected");
+  });
+
+  it("reads link-without-video as Waiting, not Connected", () => {
+    const s = M.parseStatus(FLUXCAST_WAITING);
+    assert.equal(s.connected, true);
+    assert.equal(s.video, false);
+    assert.equal(M.heroStatus(s, false), "Waiting");
+    assert.equal(M.heroStatus(s, true), "");
+    assert.equal(
+      M.tooltipText(s),
+      "Screencast waiting for the display to start video"
+    );
+    // The link line still names the peer; the popup adds the Waiting text.
+    assert.equal(M.linkText(s), "U0320");
+  });
+
+  it("parses the video flag, defaulting to no video", () => {
+    assert.equal(M.parseStatus(FLUXCAST_CONNECTED).video, true);
+    assert.equal(M.parseStatus(FLUXCAST_WAITING).video, false);
+    assert.equal(M.parseStatus(NMCLI_IDLE).video, false);
+    assert.equal(M.parseStatus(NMCLI_CONNECTED).video, false);
   });
 
   it("prefers P2P name, then mDNS, then raw peer", () => {
@@ -577,16 +621,23 @@ describe("display helpers", () => {
 
   it("names the peer in the connected tooltip", () => {
     assert.equal(
-      M.tooltipText(M.parseStatus(NMCLI_CONNECTED_NAMED)),
+      M.tooltipText(M.parseStatus(FLUXCAST_CONNECTED)),
       "Screencast: U0320"
-    );
-    assert.equal(
-      M.tooltipText(M.parseStatus(NMCLI_CONNECTED)),
-      "Screencast: Wi-Fi P2P Peer AA:BB:CC:DD:EE:FF"
     );
     assert.equal(
       M.tooltipText(M.parseStatus(NMCLI_CONNECTING)),
       "Screencast connecting..."
+    );
+  });
+
+  it("names waiting instead of a peer without video", () => {
+    assert.equal(
+      M.tooltipText(M.parseStatus(NMCLI_CONNECTED_NAMED)),
+      "Screencast waiting for the display to start video"
+    );
+    assert.equal(
+      M.tooltipText(M.parseStatus(NMCLI_CONNECTED)),
+      "Screencast waiting for the display to start video"
     );
   });
 

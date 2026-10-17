@@ -22,6 +22,13 @@ Panel {
   property int animFrame: 0
   property bool pendingConnect: false
   property string pendingPeer: ""
+  // Exact selector for the outstanding click (always a MAC after
+  // resolution). Kept so a dead handshake can be retried once.
+  property string pendingSelector: ""
+  // One automatic retry per click: the sink's own logs show an accepted
+  // invitation sometimes forms no group, while an identical retry
+  // succeeds. Consumed by the retry; a manual Disconnect disarms it.
+  property bool retryArmed: false
   // True when the running engine was started by this widget (popup click
   // or IPC connect). Only our own linkless-stuck engine is auto-reaped;
   // an externally started one is left alone.
@@ -48,6 +55,14 @@ Panel {
 
   function refresh(withScan) {
     var scan = withScan === true
+    // A full scan drives the radio off-channel for ~8 s and collapses an
+    // in-progress P2P handshake: the sink joins, then never starts video.
+    // While connecting or tearing down, downgrade to a fast probe; the
+    // retry timer re-requests the scan once things settle.
+    if (scan && (root.pendingConnect || disconnectProc.running)) {
+      scan = false
+      scanRetryTimer.restart()
+    }
     if (statusProc.running) {
       if (scan) scanRetryTimer.restart()
       return
@@ -89,13 +104,24 @@ Panel {
       pendingConnect = false
     } else if (pendingConnect) {
       // Slow legitimate connects (scan retries plus NM activation) can
-      // outlast the give-up timer, so a live handshake extends it; an
-      // engine that died before its first post-click result clears it
-      // and rescans, so a retry resolves against fresh discovery.
+      // outlast the give-up timer, so a live handshake extends it.
       if (parsed.connecting) pendingTimer.restart()
       else if (doneSeq > pendingSeq && !parsed.appRunning) {
-        pendingConnect = false
-        refresh(true)
+        // Our engine died before any link: the sink accepted the
+        // invitation but the group handshake collapsed (its own logs
+        // show an identical retry succeeding). Retry once with the
+        // same peer; only then fall back to a rescan. connectTo
+        // refuses while pendingConnect is set, so clear it first.
+        if (root.retryArmed && root.pendingSelector !== "") {
+          var sel = root.pendingSelector
+          var label = root.pendingPeer
+          pendingConnect = false
+          retryArmed = false
+          root.connectTo(sel, label)
+        } else {
+          pendingConnect = false
+          refresh(true)
+        }
       }
     }
     if (parsed.hasSinks) {
@@ -136,6 +162,8 @@ Panel {
     if (root.appRunning || root.linkActive || root.pendingConnect || disconnectProc.running) return
     var display = String(name === undefined || name === null ? "" : name).trim()
     pendingPeer = (display === "" || display === "(unknown)") ? selector : display
+    pendingSelector = selector
+    retryArmed = true
     pendingSeq = probeSeq
     pendingConnect = true
     ownEngine = true
@@ -147,10 +175,14 @@ Panel {
   }
 
   // Popup link line: live "Connecting to <peer>" progress while a
-  // click is outstanding, otherwise the probed link state.
+  // click is outstanding, "Waiting for beamer" when the link is up but
+  // the sink never started video, otherwise the probed link state.
   function linkLine() {
     if (root.pendingConnect && !root.connected) {
       return "Connecting to " + root.pendingPeer + Model.dots(root.animFrame)
+    }
+    if (root.connected && !root.status.video) {
+      return "Waiting for beamer" + Model.dots(root.animFrame)
     }
     return Model.linkText(root.status)
   }
@@ -158,6 +190,7 @@ Panel {
   function disconnect() {
     if (disconnectProc.running) return
     pendingConnect = false
+    retryArmed = false
     pendingTimer.stop()
     animFrame = 0
     disconnectProc.running = true
@@ -222,11 +255,12 @@ Panel {
     onTriggered: root.refresh(false)
   }
 
-  // Drives the activity dots while a discovery sweep, a connect, or
-  // a disconnect is in progress; idle otherwise.
+  // Drives the activity dots while a discovery sweep, a connect, a
+  // disconnect, or a wait for the sink's video is in progress; idle
+  // otherwise.
   Timer {
     interval: 400
-    running: root.opened && (root.scanning || (root.pendingConnect && !root.connected) || disconnectProc.running)
+    running: root.opened && (root.scanning || (root.pendingConnect && !root.connected) || disconnectProc.running || (root.connected && !root.status.video))
     repeat: true
     onTriggered: root.animFrame = root.animFrame + 1
   }
@@ -252,6 +286,7 @@ Panel {
       return JSON.stringify({
         connected: root.connected,
         connecting: root.connecting,
+        video: root.status.video === true,
         engine: root.appRunning,
         wifi: root.status.wifiOn,
         peer: Model.peerLabel(root.status)

@@ -46,6 +46,7 @@ function emptyStatus() {
     peerMac: "",
     connected: false,
     connecting: false,
+    video: false,
     wifiOn: true,
     sinks: [],
     hasSinks: false,
@@ -144,6 +145,11 @@ function parseStatus(text) {
       continue
     }
     if (line === "wifi=enabled") continue
+    if (line === "video=yes") {
+      status.video = true
+      continue
+    }
+    if (line === "video=no") continue
     if (line === "sink_begin") {
       status.hasSinks = true
       continue
@@ -179,19 +185,22 @@ function peerLabel(status) {
 }
 
 // Hero corner text: nothing while a connect or disconnect is in flight
-// (even if the link is momentarily still up), Connected on a live link,
-// Disconnected otherwise. Steady causes (Wi-Fi off, no P2P device) read
-// as Disconnected here; the link line and tooltip keep the details.
+// (even if the link is momentarily still up). A link without video is
+// "Waiting", not "Connected": the sink joined the P2P group but never
+// started its video session (it missed our discovery), which used to
+// read as a working cast. Steady causes (Wi-Fi off, no P2P device)
+// read as Disconnected here; the link line and tooltip keep the details.
 function heroStatus(status, busy) {
   var s = status || emptyStatus()
   if (busy) return ""
-  if (s.connected) return "Connected"
+  if (s.connected) return s.video ? "Connected" : "Waiting"
   return "Disconnected"
 }
 
 function tooltipText(status) {
   var s = status || emptyStatus()
   if (s.connected) {
+    if (!s.video) return "Screencast waiting for the display to start video"
     var label = peerLabel(s)
     return label ? "Screencast: " + label : "Screencast connected"
   }
@@ -362,7 +371,15 @@ function shQuote(value) {
 // on a prompt nobody can answer.
 function connectCommand(peer) {
   var findMon = "xrandr --query 2>/dev/null | awk '$2==\"connected\"{if(!f)f=$1} $2==\"connected\"&&$3==\"primary\"{p=$1} END{print (p!=\"\"?p:f)}'"
-  var script = "mon=$(" + findMon + "); "
+  // The engine's own stdout is the only record of the P2P handshake and
+  // the sink's video session ("waiting for TV RTSP" vs "TV connected"),
+  // so every run appends to a trimmed log: without it a stuck session
+  // leaves no trace once its link state is all the widget shows.
+  var logSetup = "log=\"$HOME/.local/state/kili.screencast/fluxcast.log\"; "
+    + "mkdir -p \"${log%/*}\"; "
+    + "if [ -f \"$log\" ]; then tail -n 200 \"$log\" > \"$log.tmp\" && mv -f \"$log.tmp\" \"$log\"; fi; "
+  var script = logSetup
+    + "mon=$(" + findMon + "); "
     + "if [ -z \"$mon\" ]; then "
     + "for l in /tmp/.X[0-9]*-lock; do "
     + "[ -e \"$l\" ] || continue; "
@@ -370,8 +387,8 @@ function connectCommand(peer) {
     + "mon=$(DISPLAY=$d " + findMon + "); "
     + "[ -n \"$mon\" ] && break; "
     + "done; fi; "
-    + "exec fluxcast --protocol wfd --wfd-timeout 4 --wfd-peer " + shQuote(peer)
-    + " ${mon:+--monitor \"$mon\"} </dev/null"
+    + "fluxcast --protocol wfd --wfd-timeout 4 --wfd-peer " + shQuote(peer)
+    + " ${mon:+--monitor \"$mon\"} </dev/null 2>&1 | tee -a \"$log\" >/dev/null"
   return ["sh", "-c", script]
 }
 

@@ -66,6 +66,17 @@ fi
 echo "nm_name=$nm_name"
 echo "mdns_name=$mdns_name"
 
+# Video actually flowing: an established TCP session on the WFD RTSP port.
+# A P2P link alone is not a cast -- the sink joins first and only starts
+# video later (or never, when it missed our discovery). Nothing else on
+# this machine uses 7236, so any established match is the sink talking
+# to our engine.
+if ss -tn state established 2>/dev/null | grep -q ':7236'; then
+  echo video=yes
+else
+  echo video=no
+fi
+
 echo known_begin
 if [ -f "$HIST" ]; then
   while IFS= read -r hline; do

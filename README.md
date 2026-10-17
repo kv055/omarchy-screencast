@@ -15,6 +15,17 @@ a link is up, a connect is outstanding, or a disconnect is running
 link). It never shows on a Disconnected popup: a widget-started engine that
 stays linkless for 90 s is stuck, so the widget reaps it automatically.
 
+A link is not a cast: the sink joins the P2P group first and starts its
+video session after (or never, when it missed our discovery). A link
+without video reads as **Waiting**, with dots, instead of a false
+Connected. Scans are suppressed while a connect is outstanding — a full
+scan takes the radio off-channel and collapses the handshake — and if our
+engine dies before any link, the widget retries the connect once before
+giving up: the sink's own logs show an accepted invitation sometimes forms
+no group while an identical retry succeeds. Every engine run appends its
+output to `~/.local/state/kili.screencast/fluxcast.log` (trimmed to 200
+lines), the only record of the handshake once the widget moves on.
+
 ## Files
 
 | File           | Purpose                                                              |
@@ -68,8 +79,8 @@ The widget answers scripted control over the shell bus — the same code
 paths as popup clicks — which the OMCP tools wrap:
 
 ```bash
-omarchy-shell kili.screencast status                    # JSON: connected, connecting, engine, wifi, peer
-omarchy-shell kili.screencast connect 9A:03:CF:FC:40:A3 # peer MAC or device-name substring
+omarchy-shell kili.screencast status                    # JSON: connected, connecting, video, engine, wifi, peer
+omarchy-shell kili.screencast connect 9A:03:CF:FC:40:A3 # peer MAC or exact device name
 omarchy-shell kili.screencast disconnect
 ```
 
