@@ -3,11 +3,12 @@
 //
 // Status probe output is one "app=<running|stopped>" line, the output of
 // `nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status`, the name tier
-// lines, and -- in scan mode only -- a "sink_begin" marker plus one
-// tab-separated "sink=<name>\t<hw>\t<wfd>\t<active>" line per P2P peer.
-// Terse mode backslash-escapes literal ':' and '\' inside fields (e.g. the
-// colons in "Wi-Fi P2P Peer 9A:03:..."), so fields split on unescaped ':'
-// only.
+// lines, a "known_begin" marker plus one tab-separated
+// "known=<mac>\t<epoch>\t<alias>\t<name>" line per history entry, and --
+// in scan mode only -- a "sink_begin" marker plus one tab-separated
+// "sink=<name>\t<hw>\t<wfd>\t<active>" line per P2P peer. Terse mode
+// backslash-escapes literal ':' and '\' inside fields (e.g. the colons in
+// "Wi-Fi P2P Peer 9A:03:..."), so fields split on unescaped ':' only.
 
 // Nerd Font icons (JetBrainsMono Nerd Font, verified in the installed file):
 // U+F0118 cast outline, U+F0119 cast with filled screen (connected).
@@ -27,7 +28,8 @@ function emptyStatus() {
     connected: false,
     connecting: false,
     sinks: [],
-    hasSinks: false
+    hasSinks: false,
+    knownRaw: []
   }
 }
 
@@ -92,6 +94,21 @@ function parseSink(body) {
   }
 }
 
+// History entry from the probe. Returns null for rows without a MAC, which
+// can neither merge nor display.
+function parseKnown(body) {
+  var f = String(body === undefined || body === null ? "" : body).split("\t")
+  var mac = (f[0] || "").trim()
+  if (mac === "") return null
+  var epoch = parseInt(f[1], 10)
+  return {
+    mac: mac,
+    epoch: isFinite(epoch) && epoch > 0 ? epoch : 0,
+    alias: (f[2] || "").trim(),
+    name: (f[3] || "").trim()
+  }
+}
+
 function parseStatus(text) {
   var status = emptyStatus()
   var lines = String(text === undefined || text === null ? "" : text).split("\n")
@@ -109,6 +126,12 @@ function parseStatus(text) {
     }
     if (line.indexOf("sink=") === 0) {
       status.sinks.push(parseSink(line.slice("sink=".length)))
+      continue
+    }
+    if (line === "known_begin") continue
+    if (line.indexOf("known=") === 0) {
+      var known = parseKnown(line.slice("known=".length))
+      if (known) status.knownRaw.push(known)
       continue
     }
     if (peerNameLine(status, line)) continue
@@ -129,6 +152,11 @@ function parseStatus(text) {
 function peerLabel(status) {
   var s = status || emptyStatus()
   return s.aliasName || s.nmName || s.mdnsName || s.peer || ""
+}
+
+function capitalize(word) {
+  var w = String(word === undefined || word === null ? "" : word)
+  return w === "" ? w : w.charAt(0).toUpperCase() + w.slice(1)
 }
 
 function statusText(status) {
@@ -156,7 +184,7 @@ function linkText(status) {
   var s = status || emptyStatus()
   if (s.connected) return peerLabel(s) || "Connected"
   if (s.connecting) return peerLabel(s) || "Connecting"
-  if (s.p2pDevice) return s.p2pDevice + " - " + (s.p2pState || "unknown")
+  if (s.p2pDevice) return capitalize(s.p2pState || "unknown")
   return "No P2P device"
 }
 
@@ -166,6 +194,65 @@ function sinkBadge(sink) {
   if (s.active) return "Connected"
   if (s.wfd) return "Display"
   return "Device"
+}
+
+function relTime(epochSec, nowSec) {
+  var now = nowSec === undefined ? Math.floor(Date.now() / 1000) : nowSec
+  var diff = now - Number(epochSec || 0)
+  if (!(diff > 0)) return "just now"
+  if (diff < 60) return "just now"
+  if (diff < 3600) return Math.floor(diff / 60) + "m ago"
+  if (diff < 86400) return Math.floor(diff / 3600) + "h ago"
+  return Math.floor(diff / 86400) + "d ago"
+}
+
+// Known-display rows: history entries not currently nearby, deduped by MAC
+// (newest wins), newest first. The session peer keeps a Connected badge so
+// an active-but-unscanned link still shows up. nowSec is injectable for
+// tests; callers omit it.
+function knownRows(nearby, knownRaw, sessionMac, nowSec) {
+  var near = {}
+  var i
+  var list = nearby || []
+  for (i = 0; i < list.length; i++) {
+    var hw = list[i] ? String(list[i].hw || "").toUpperCase() : ""
+    if (hw !== "") near[hw] = true
+  }
+  var active = String(sessionMac || "").toUpperCase()
+  var byMac = {}
+  var raw = knownRaw || []
+  for (i = 0; i < raw.length; i++) {
+    var entry = raw[i] || {}
+    var mac = String(entry.mac || "").toUpperCase()
+    if (mac === "" || near[mac]) continue
+    if (!byMac[mac] || (entry.epoch || 0) > (byMac[mac].epoch || 0)) byMac[mac] = entry
+  }
+  var rows = []
+  for (var key in byMac) rows.push(byMac[key])
+  rows.sort(function(a, b) { return (b.epoch || 0) - (a.epoch || 0) })
+  return rows.map(function(e) {
+    var isActive = active !== "" && String(e.mac || "").toUpperCase() === active
+    return {
+      label: e.alias || e.name || e.mac,
+      badge: isActive ? "Connected" : ((e.epoch || 0) > 0 ? relTime(e.epoch, nowSec) : "Known"),
+      active: isActive,
+      epoch: e.epoch || 0
+    }
+  })
+}
+
+function sessionMac(status) {
+  var m = /^Wi-Fi P2P Peer\s+(.+)$/.exec(String((status && status.peer) || ""))
+  return m ? m[1].trim() : ""
+}
+
+function isMacAddress(value) {
+  return /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(String(value || ""))
+}
+
+// Single-quote a string for sh: wrap in quotes, escape embedded ones.
+function shQuote(value) {
+  return "'" + String(value === undefined || value === null ? "" : value).replace(/'/g, "'\\''") + "'"
 }
 
 function iconFor(status) {
@@ -181,9 +268,16 @@ if (typeof module !== "undefined") {
     splitTerse: splitTerse,
     parseDeviceRow: parseDeviceRow,
     parseSink: parseSink,
+    parseKnown: parseKnown,
     parseStatus: parseStatus,
     peerLabel: peerLabel,
+    capitalize: capitalize,
     sinkBadge: sinkBadge,
+    relTime: relTime,
+    knownRows: knownRows,
+    sessionMac: sessionMac,
+    isMacAddress: isMacAddress,
+    shQuote: shQuote,
     statusText: statusText,
     tooltipText: tooltipText,
     linkText: linkText,
