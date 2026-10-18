@@ -11,6 +11,12 @@
 # marker plus one tab-separated
 # "sink=<name>\t<hw>\t<wfd>\t<active>" line per peer.
 #
+# Failure evidence for the widget's error line: "engine_bin=<yes|no>",
+# "rtsp_port=busy" when a foreign listener holds port 7236,
+# "fw_block=<n>" (logged firewall drops of the sink's RTSP dial, while
+# an engine runs), and the latest engine run from fluxcast.log as
+# "log_run=<epoch>" plus its last 60 lines as "log=<line>".
+#
 # NOTE: the pgrep pattern uses the bracket trick so the probe never
 # matches its own command line: the regex needs a literal "wfd", but the
 # command line only ever holds "wf[d]". Keep the unbracketed literal out
@@ -19,10 +25,15 @@ mode=${1:-fast}
 
 HIST="$HOME/.local/state/kili.screencast/history.tsv"
 
-if pgrep -f 'protocol wf[d]' >/dev/null 2>&1; then
-  echo app=running
+app=stopped
+pgrep -f 'protocol wf[d]' >/dev/null 2>&1 && app=running
+echo "app=$app"
+
+# A missing engine fails every click; name it before anything else.
+if command -v fluxcast >/dev/null 2>&1; then
+  echo engine_bin=yes
 else
-  echo app=stopped
+  echo engine_bin=no
 fi
 
 wifi_state=enabled
@@ -75,6 +86,41 @@ if ss -tn state established 2>/dev/null | grep -q ':7236'; then
   echo video=yes
 else
   echo video=no
+fi
+
+# The RTSP port held while no engine of ours runs: another WFD sender has
+# it, and FluxCast's bind would fail.
+if [ "$app" = stopped ] && [ -n "$(ss -Htln 'sport = :7236' 2>/dev/null)" ]; then
+  echo rtsp_port=busy
+fi
+
+# Logged firewall drops of the sink's RTSP dial: once the link is up the
+# sink connects to our 7236, and a drop leaves a link with no video.
+# ufw logs "[UFW BLOCK]" by default, firewalld only with LogDenied. The
+# window spans two dials of a sink redialing every ~20 s. Queried only
+# while an engine runs -- nothing dials otherwise -- and readable without
+# root for wheel/adm/systemd-journal members.
+if [ "$app" = running ]; then
+  n=$(journalctl -k -q --no-pager --since -45s -g '(BLOCK|DROP|REJECT|DENY).*DPT=7236 ' 2>/dev/null | wc -l)
+  echo "fw_block=$n"
+fi
+
+# The latest engine run (Model.connectCommand writes the marker): its
+# start epoch, then its last 60 lines, from which the widget names why an
+# attempt failed.
+LOG="$HOME/.local/state/kili.screencast/fluxcast.log"
+if [ -f "$LOG" ]; then
+  awk '
+    #LOG_AWK_BEGIN
+    /^=== kili\.screencast run [0-9]+ ===$/ { run = $4; n = 0; next }
+    run != "" { buf[n % 60] = $0; n++ }
+    END {
+      if (run == "") exit
+      print "log_run=" run
+      for (i = (n > 60 ? n - 60 : 0); i < n; i++) print "log=" buf[i % 60]
+    }
+    #LOG_AWK_END
+  ' "$LOG"
 fi
 
 echo known_begin

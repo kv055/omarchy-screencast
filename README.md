@@ -27,7 +27,38 @@ show an accepted invitation sometimes forms no group while an identical
 retry succeeds, and a missed video trigger never recovers by waiting.
 Disconnect during the pause cancels the retry. Every engine run appends
 its output to `~/.local/state/kili.screencast/fluxcast.log` (trimmed to
-200 lines), the only record of the handshake once the widget moves on.
+200 lines, one `=== kili.screencast run <epoch> ===` marker per run),
+the only record of the handshake once the widget moves on.
+
+When something goes wrong, the popup says what, in the theme's urgent
+color under the link line (also in the tooltip and the IPC `status`):
+the widget reads the attempt's own engine log, logged firewall drops,
+and what it observed itself, and names the cause, with a fix where
+there is one. A firewall dropping the sink's RTSP dial shows up while
+the link waits, and the link is kept: the sink redials every ~20 s, so
+fixing the firewall lets video start without a new click. Local setup
+problems (no FluxCast, port 7236 taken, no monitor, no Wi-Fi Direct
+device) refuse the click up front and skip the automatic retry. The
+error stays until the next click or until video flows.
+
+| Code            | Meaning                                                        |
+| --------------- | -------------------------------------------------------------- |
+| `firewall`      | Kernel log shows drops of the sink's dial to TCP 7236          |
+| `no-video`      | Link up a minute, sink never opened its video session          |
+| `not-found`     | FluxCast's scans never saw the peer                            |
+| `link-failed`   | The Wi-Fi Direct link never completed                          |
+| `rtsp-failed`   | The sink broke off the RTSP setup (FluxCast's reason attached) |
+| `sink-ended`    | The sink tore down a session that had played                   |
+| `lost`          | A playing link dropped without a teardown from either side     |
+| `media-failed`  | Screen capture or encoding failed to start                     |
+| `no-monitor`    | No capturable monitor                                          |
+| `port-busy`     | Another sender holds TCP 7236                                  |
+| `not-ready`     | FluxCast's doctor checks fail (`fluxcast --doctor`)            |
+| `no-p2p`        | NetworkManager exposes no Wi-Fi P2P device                     |
+| `not-installed` | `fluxcast` is not on `PATH`                                    |
+| `crashed`       | FluxCast died with an uncaught exception (named)               |
+| `engine-error`  | Any other FluxCast `ERROR:` line, shown verbatim               |
+| `engine-exit`   | FluxCast exited before a link with nothing in its log          |
 
 ## Files
 
@@ -82,13 +113,17 @@ The widget answers scripted control over the shell bus — the same code
 paths as popup clicks — which the OMCP tools wrap:
 
 ```bash
-omarchy-shell kili.screencast status                    # JSON: connected, connecting, video, engine, wifi, peer
+omarchy-shell kili.screencast status                    # JSON: connected, connecting, video, engine, wifi, peer, error, errorCode
 omarchy-shell kili.screencast connect 9A:03:CF:FC:40:A3 # peer MAC or exact device name
 omarchy-shell kili.screencast disconnect
 ```
 
 `connect` answers `{"ok":true}` once the session is launched — poll
-`status` for the link — or `{"ok":false,"reason":"busy"|"invalid peer"}`.
+`status` for the link, and its `errorCode`/`error` (the popup's error
+line, `""` when none) for a failure — or
+`{"ok":false,"reason":"busy"|"invalid peer"|"unknown peer"|"ambiguous peer"}`.
+A local setup problem refuses with its error code as the reason plus an
+`error` message, e.g. `{"ok":false,"reason":"port-busy","error":"..."}`.
 `disconnect` answers `{"ok":true}`, or `{"ok":false,"reason":"idle"}`.
 
 ## Notes
@@ -107,3 +142,7 @@ omarchy-shell kili.screencast disconnect
   Previous Connections.
 - Only one WFD source can hold RTSP port 7236: quit any other Screencast
   sender before connecting.
+- Firewall diagnosis reads the kernel journal (`journalctl -k`), which
+  needs membership in `wheel`, `adm` or `systemd-journal`; without it a
+  blocked dial reads as `no-video`. Only logged drops count: ufw logs
+  them by default, firewalld only with `LogDenied`.

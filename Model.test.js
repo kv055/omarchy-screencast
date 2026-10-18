@@ -173,7 +173,13 @@ describe("parseStatus", () => {
       hasSinks: false,
       knownRaw: [
         { mac: "9A:03:CF:FC:40:A3", epoch: 1792223000, name: "U0320" }
-      ]
+      ],
+      probed: true,
+      engineInstalled: true,
+      portBusy: false,
+      fwBlocked: false,
+      logRun: 0,
+      logLines: []
     });
   });
 
@@ -529,6 +535,26 @@ describe("engine commands", () => {
     // Python block-buffers piped stdout: FluxCast's own lines are lost
     // when the engine is signalled unless output is unbuffered.
     assert.match(cmd[2], /PYTHONUNBUFFERED=1 fluxcast /);
+    // Each run opens with an epoch marker the probe splits runs on, written
+    // after the trim so the latest run is always whole.
+    const marker = cmd[2].indexOf("=== kili.screencast run %s ===");
+    assert.ok(marker > cmd[2].indexOf("tail -n 200"), "marker after trim");
+    assert.ok(marker < cmd[2].indexOf("fluxcast --protocol"), "marker before engine");
+    assert.match(cmd[2], /"\$\(date \+%s\)"/);
+  });
+
+  it("writes a run marker the probe recognizes", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "screencast-marker-"));
+    try {
+      // Run only the log setup: HOME redirected, engine stubbed out.
+      const script = M.connectCommand("9A:03:CF:FC:40:A3")[2]
+        .replace(/mon=\$\(.*$/, "true");
+      execFileSync("sh", ["-c", script], { env: { ...process.env, HOME: dir } });
+      const log = fs.readFileSync(path.join(dir, ".local/state/kili.screencast/fluxcast.log"), "utf8");
+      assert.match(log, /^=== kili\.screencast run \d{10} ===\n$/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("quotes a hostile peer selector safely", () => {
@@ -691,5 +717,226 @@ describe("display helpers", () => {
     assert.equal(M.ICON_CONNECTED.codePointAt(0), 0xF0119);
     assert.equal(M.iconFor(M.parseStatus(NMCLI_CONNECTED)), M.ICON_CONNECTED);
     assert.equal(M.iconFor(M.parseStatus(NMCLI_IDLE)), M.ICON_IDLE);
+  });
+});
+
+describe("error messages", () => {
+  // Live FluxCast 0.2.9 run against the U0320 (fluxcast.run1.log, after
+  // the firewall fix): a healthy session through PLAY.
+  const HEALTHY_RUN = [
+    "[FluxCast WFD] P2P link is activated; waiting for RTSP session...",
+    "[FluxCast WFD] ufw is enabled. If the sink never opens its RTSP connection, allow the port FluxCast listens on:",
+    "    sudo ufw allow 7236/tcp    # RTSP",
+    "[FluxCast WFD] Waiting for TV RTSP/WFD session. Press Ctrl+C to stop.",
+    "[FluxCast WFD RTSP] TV connected from 192.168.49.1:57648; local=192.168.49.224",
+    "[FluxCast WFD RTSP] -> M1_OPTIONS: OPTIONS (CSeq 1)",
+    "[FluxCast WFD RTSP] <- request: PLAY rtsp://192.168.49.224/wfd1.0/streamid=0 RTSP/1.0",
+    "[FluxCast WFD RTSP] -> response 200 OK for PLAY",
+    "[FluxCast WFD RTSP] PLAY accepted; media stream started.",
+    "[FluxCast WFD Media] Sender health: pid=229735:running, pid=229736:running; tx+851 KiB on p2p-wlp0s20-4"
+  ];
+
+  // Live widget run where the sink left its group 1.5 s after the link
+  // came up (pre-unbuffer, so only ffmpeg's stderr survived).
+  const DROPPED_RUN = [
+    "[aost#0:1/aac @ 0x5fe9db7fb440] Error submitting a packet to the muxer: Network is unreachable",
+    "[out#0/rtp_mpegts @ 0x5fe9db7f8c40] Error muxing a packet",
+    "[udp @ 0x63d86fdf4680] bind failed: Cannot assign requested address",
+    "Error opening output files: Cannot assign requested address"
+  ];
+
+  // FluxCast's own failure strings (wfd/ sources, 0.2.9).
+  const ERR = (msg) => "[FluxCast WFD] ERROR: " + msg;
+
+  it("finds no failure in a healthy run or an empty one", () => {
+    assert.equal(M.engineFailure(HEALTHY_RUN), null);
+    assert.equal(M.engineFailure([]), null);
+    assert.equal(M.engineFailure(undefined), null);
+  });
+
+  it("names each FluxCast failure by its root cause", () => {
+    const cases = [
+      [[ERR("No Wi-Fi Direct peers found. Put the TV into Screen Share/Wireless Display mode.")], "not-found"],
+      [[ERR("No peer matched selector: 00:11:22:33:44:55")], "not-found"],
+      [[ERR("Timed out waiting for NetworkManager Wi-Fi Direct activation. Last status: activating")], "link-failed"],
+      [[ERR("NetworkManager deactivated the Wi-Fi Direct connection before RTSP. Last status: x")], "link-failed"],
+      [[ERR("NetworkManager activated the Wi-Fi Direct connection, but its P2P group interface could not be determined.")], "link-failed"],
+      [[ERR("Monitor 'HDMI-A-1' not found. Available: eDP-1")], "no-monitor"],
+      [[ERR("Miracast/WFD is not ready on this machine yet. Fix the warn/fail rows above, then run --wfd-scan.")], "not-ready"],
+      [[ERR("NetworkManager did not expose a Wi-Fi P2P device before scanning.")], "no-p2p"],
+      [["Traceback (most recent call last):", '  File "/opt/fluxcast/wfd/rtsp/rtsp_server.py", line 210, in start',
+        "OSError: [Errno 98] Address already in use"], "port-busy"],
+      [["[FluxCast WFD RTSP] ERROR: wf-recorder exited immediately during WFD streaming."], "media-failed"],
+      [DROPPED_RUN, "lost"]
+    ];
+    for (const [lines, code] of cases) {
+      assert.equal(M.engineFailure(lines).code, code, lines[lines.length - 1]);
+    }
+  });
+
+  it("tells an aborted setup from a session the sink ended", () => {
+    const setup = M.engineFailure([
+      "[FluxCast WFD RTSP] TV connected from 192.168.49.1:57648; local=192.168.49.224",
+      "[FluxCast WFD RTSP] ERROR: RTSP M4_SET_PARAMETER failed: RTSP/1.0 400 Bad Request"
+    ]);
+    assert.deepEqual(setup, { code: "rtsp-failed", detail: "RTSP M4_SET_PARAMETER failed: RTSP/1.0 400 Bad Request" });
+    assert.equal(M.engineFailure(["[FluxCast WFD RTSP] Socket closed: RTSP read timed out"]).code, "rtsp-failed");
+    const ended = HEALTHY_RUN.concat(["[FluxCast WFD RTSP] <- request: TEARDOWN rtsp://192.168.49.224/wfd1.0/streamid=0 RTSP/1.0"]);
+    assert.equal(M.engineFailure(ended).code, "sink-ended");
+  });
+
+  it("passes unknown FluxCast errors and crashes through in its own words", () => {
+    assert.deepEqual(M.engineFailure([ERR("Something new went wrong")]), { code: "engine-error", detail: "Something new went wrong" });
+    assert.deepEqual(
+      M.engineFailure(["Traceback (most recent call last):", '  File "x.py", line 1', "ValueError: boom"]),
+      { code: "crashed", detail: "ValueError: boom" }
+    );
+    // SIGINT before the session loop is our own teardown, not a crash.
+    assert.equal(M.engineFailure(["Traceback (most recent call last):", '  File "x.py", line 1', "KeyboardInterrupt"]), null);
+  });
+
+  it("parses failure evidence from the probe", () => {
+    const s = M.parseStatus(
+      FLUXCAST_WAITING +
+      "engine_bin=yes\nfw_block=3\nlog_run=1792347896\n" +
+      "log=" + ERR("No peer matched selector: x") + "\nlog=app=running\n"
+    );
+    assert.equal(s.probed, true);
+    assert.equal(s.engineInstalled, true);
+    assert.equal(s.fwBlocked, true);
+    assert.equal(s.portBusy, false);
+    assert.equal(s.logRun, 1792347896);
+    // Log payloads never leak into other fields, even when they look like probe lines.
+    assert.deepEqual(s.logLines, [ERR("No peer matched selector: x"), "app=running"]);
+    assert.equal(s.appRunning, true);
+    const idle = M.parseStatus(NMCLI_IDLE + "engine_bin=no\nrtsp_port=busy\nfw_block=0\n");
+    assert.equal(idle.engineInstalled, false);
+    assert.equal(idle.portBusy, true);
+    assert.equal(idle.fwBlocked, false);
+    assert.equal(M.emptyStatus().probed, false);
+  });
+
+  it("diagnoses from this attempt's log, then the firewall, then the fallback", () => {
+    const withLog = (run, extra) => M.parseStatus(
+      FLUXCAST_WAITING + (extra || "") + "log_run=" + run + "\nlog=" + ERR("No peer matched selector: x") + "\n"
+    );
+    assert.equal(M.diagnose(withLog(1000), 1000, "link-failed").code, "not-found");
+    // A run older than the attempt is an earlier attempt's story.
+    assert.equal(M.diagnose(withLog(999), 1000, "link-failed").code, "link-failed");
+    // 0 = foreign engine: its output is not in our log.
+    assert.equal(M.diagnose(withLog(1000), 0, "link-failed").code, "link-failed");
+    assert.equal(M.diagnose(withLog(999, "fw_block=2\n"), 1000, "no-video").code, "firewall");
+    assert.equal(M.diagnose(M.parseStatus(FLUXCAST_WAITING), 1000, "").code, "engine-exit");
+    assert.equal(M.diagnose(null, 0, "no-video").code, "no-video");
+  });
+
+  it("refines a drop after video only by a sink teardown", () => {
+    const run = (lines) => M.parseStatus("app=running\nlog_run=1000\n" + lines.map((l) => "log=" + l + "\n").join(""));
+    assert.equal(M.diagnose(run(DROPPED_RUN), 1000, "lost").code, "lost");
+    assert.equal(M.diagnose(run(["[FluxCast WFD RTSP] TV disconnected from 192.168.49.1:57648"]), 1000, "lost").code, "sink-ended");
+  });
+
+  it("says what failed and what to do, naming the display", () => {
+    assert.equal(M.errorMessage("", "U0320", ""), "");
+    assert.equal(
+      M.errorMessage("firewall", "U0320", ""),
+      "Firewall is blocking U0320 on TCP 7236. Run: sudo ufw allow 7236/tcp && sudo ufw reload"
+    );
+    assert.equal(M.errorMessage("not-found", "U0320", ""), "U0320 was not found. Is it on and in screen-mirroring mode?");
+    assert.equal(M.errorMessage("not-found", "", ""), "The display was not found. Is it on and in screen-mirroring mode?");
+    assert.equal(M.errorMessage("lost", "", ""), "Lost the connection to the display.");
+    assert.equal(
+      M.errorMessage("rtsp-failed", "U0320", "RTSP M4_SET_PARAMETER failed: RTSP/1.0 400 Bad Request."),
+      "U0320 broke off the video session setup (RTSP M4_SET_PARAMETER failed: RTSP/1.0 400 Bad Request)."
+    );
+    assert.equal(M.errorMessage("engine-error", "", "Something new"), "FluxCast: Something new");
+    assert.equal(M.errorMessage("not-installed", "", ""), "FluxCast is not installed. Run: omarchy pkg aur add fluxcast-git");
+    assert.match(M.errorMessage("no-such-code", "", ""), /^Screencast failed\. See ~\/\.local\/state\/kili\.screencast\/fluxcast\.log$/);
+    // Every code the widget can produce has its own text.
+    const codes = ["firewall", "no-video", "not-found", "link-failed", "rtsp-failed", "sink-ended", "lost",
+      "media-failed", "no-monitor", "port-busy", "not-ready", "no-p2p", "not-installed", "crashed",
+      "engine-error", "engine-exit"];
+    for (const code of codes) {
+      assert.doesNotMatch(M.errorMessage(code, "U0320", ""), /^Screencast failed/, code);
+    }
+  });
+
+  it("keeps FluxCast's words to one clean, bounded line", () => {
+    assert.equal(M.cleanDetail("a\x1b[31m\r\nb\t c "), "a [31m b c");
+    const long = M.cleanDetail("x".repeat(500));
+    assert.equal(long.length, 160);
+    assert.ok(long.endsWith("…"));
+    assert.equal(M.cleanDetail(null), "");
+  });
+
+  it("refuses a click only for steady local problems", () => {
+    assert.equal(M.steadyError(M.emptyStatus()), "", "unprobed status is not an error");
+    assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE)), "");
+    assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE + "engine_bin=no\n")), "not-installed");
+    assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE + "rtsp_port=busy\n")), "port-busy");
+    // Our own running engine holds the port legitimately.
+    assert.equal(M.steadyError(M.parseStatus(FLUXCAST_WAITING + "rtsp_port=busy\n")), "");
+    assert.equal(M.steadyError(M.parseStatus(NMCLI_NO_P2P)), "no-p2p");
+  });
+
+  it("retries the sink's failures, never local setup problems", () => {
+    for (const code of ["not-found", "link-failed", "engine-exit", "rtsp-failed", "no-video", "lost"]) {
+      assert.equal(M.shouldRetry(code), true, code);
+    }
+    for (const code of ["port-busy", "no-monitor", "not-ready", "no-p2p", "not-installed"]) {
+      assert.equal(M.shouldRetry(code), false, code);
+    }
+  });
+
+  it("shows the error in the tooltip once idle or while video waits", () => {
+    const err = "Firewall is blocking U0320 on TCP 7236.";
+    assert.equal(M.tooltipText(M.parseStatus(FLUXCAST_WAITING), err), "Screencast: " + err);
+    assert.equal(M.tooltipText(M.parseStatus(NMCLI_IDLE), err), "Screencast: " + err);
+    assert.equal(M.tooltipText(M.parseStatus(FLUXCAST_CONNECTED), err), "Screencast: U0320");
+    assert.equal(M.tooltipText(M.parseStatus(NMCLI_IDLE), ""), "Screencast idle");
+  });
+});
+
+describe("engine log probe", () => {
+  // The awk program is extracted from probe.sh itself, like the scan parser.
+  function logAwk() {
+    const src = fs.readFileSync(path.join(__dirname, "probe.sh"), "utf8");
+    const begin = src.indexOf("#LOG_AWK_BEGIN");
+    const end = src.indexOf("#LOG_AWK_END");
+    assert.ok(begin !== -1 && end !== -1 && begin < end, "log awk markers present in probe.sh");
+    return src.slice(begin, end) + "#LOG_AWK_END\n";
+  }
+
+  function runLog(content) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "screencast-log-"));
+    const prog = path.join(dir, "log.awk");
+    fs.writeFileSync(prog, logAwk());
+    try {
+      return execFileSync("awk", ["-f", prog], { input: content, encoding: "utf8" });
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("emits only the latest run, tagged with its epoch", () => {
+    const out = runLog(
+      "=== kili.screencast run 1000 ===\nold line\n" +
+      "=== kili.screencast run 2000 ===\nnew one\nnew two\n"
+    );
+    assert.equal(out, "log_run=2000\nlog=new one\nlog=new two\n");
+  });
+
+  it("caps a long run at its last 60 lines", () => {
+    let content = "=== kili.screencast run 3000 ===\n";
+    for (let i = 1; i <= 75; i++) content += "line " + i + "\n";
+    const lines = runLog(content).trimEnd().split("\n");
+    assert.equal(lines.length, 61);
+    assert.equal(lines[1], "log=line 16");
+    assert.equal(lines[60], "log=line 75");
+  });
+
+  it("emits nothing for a log without markers", () => {
+    assert.equal(runLog("pre-marker output\n"), "");
+    assert.equal(runLog(""), "");
   });
 });

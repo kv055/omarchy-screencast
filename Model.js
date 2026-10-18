@@ -13,6 +13,12 @@
 // WFD peer found by `fluxcast --wfd-scan`. Terse mode backslash-escapes
 // literal ':' and '\' inside fields (e.g. the colons in
 // "Wi-Fi P2P Peer 9A:03:..."), so fields split on unescaped ':' only.
+//
+// Failure evidence rides along: "engine_bin=<yes|no>" (FluxCast
+// installed), "rtsp_port=busy" (a foreign listener holds the RTSP port),
+// "fw_block=<n>" (logged firewall drops of the sink's RTSP dial, only
+// while an engine runs), and the latest engine run from fluxcast.log as
+// one "log_run=<epoch>" line plus up to 60 "log=<line>" lines.
 
 // Nerd Font icons (JetBrainsMono Nerd Font, verified in the installed file):
 // U+F0118 cast outline, U+F0119 cast with filled screen (connected).
@@ -46,6 +52,11 @@ function shouldRecoverWaiting(waitingMs) {
   return Number(waitingMs) >= WAITING_VIDEO_MS
 }
 
+// The engine's RTSP port: the sink dials it once the P2P link is up.
+var RTSP_PORT = 7236
+
+var LOG_PATH = "~/.local/state/kili.screencast/fluxcast.log"
+
 function shouldReapLinkless(linklessMs) {
   return Number(linklessMs) >= LINKLESS_REAP_MS
 }
@@ -65,7 +76,15 @@ function emptyStatus() {
     wifiOn: true,
     sinks: [],
     hasSinks: false,
-    knownRaw: []
+    knownRaw: [],
+    // False until a probe answered: an empty status must not read as
+    // "no P2P device" and refuse the first click.
+    probed: false,
+    engineInstalled: true,
+    portBusy: false,
+    fwBlocked: false,
+    logRun: 0,
+    logLines: []
   }
 }
 
@@ -150,11 +169,39 @@ function parseStatus(text) {
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i].trim()
     if (line === "") continue
-    if (line === "app=running") {
-      status.appRunning = true
+    // Engine log lines first: their payload is free text that could
+    // look like any other probe line.
+    if (line.indexOf("log=") === 0) {
+      status.logLines.push(line.slice("log=".length))
       continue
     }
-    if (line === "app=stopped") continue
+    if (line.indexOf("log_run=") === 0) {
+      var run = parseInt(line.slice("log_run=".length), 10)
+      status.logRun = isFinite(run) && run > 0 ? run : 0
+      continue
+    }
+    if (line === "app=running") {
+      status.appRunning = true
+      status.probed = true
+      continue
+    }
+    if (line === "app=stopped") {
+      status.probed = true
+      continue
+    }
+    if (line === "engine_bin=no") {
+      status.engineInstalled = false
+      continue
+    }
+    if (line === "engine_bin=yes") continue
+    if (line === "rtsp_port=busy") {
+      status.portBusy = true
+      continue
+    }
+    if (line.indexOf("fw_block=") === 0) {
+      status.fwBlocked = parseInt(line.slice("fw_block=".length), 10) > 0
+      continue
+    }
     if (line === "wifi=disabled") {
       status.wifiOn = false
       continue
@@ -212,15 +259,19 @@ function heroStatus(status, busy) {
   return "Disconnected"
 }
 
-function tooltipText(status) {
+// errorText is the popup's error line (see errorMessage); a live link
+// without video shows it too, since that is when it explains the wait.
+function tooltipText(status, errorText) {
   var s = status || emptyStatus()
+  var err = String(errorText || "")
   if (s.connected) {
-    if (!s.video) return "Screencast waiting for the display to start video"
+    if (!s.video) return err ? "Screencast: " + err : "Screencast waiting for the display to start video"
     var label = peerLabel(s)
     return label ? "Screencast: " + label : "Screencast connected"
   }
   if (s.connecting) return "Screencast connecting..."
   if (!s.wifiOn) return "Screencast needs Wi-Fi - please turn it on"
+  if (err) return "Screencast: " + err
   if (s.appRunning) return "Screencast engine running - not connected"
   if (!s.p2pDevice) return "Screencast unavailable (no P2P device)"
   return "Screencast idle"
@@ -232,6 +283,153 @@ function linkText(status) {
   if (s.connecting) return peerLabel(s) || "Connecting"
   if (!s.wifiOn) return "Please turn on Wi-Fi to use casting"
   return ""
+}
+
+// Engine log evidence as [pattern, code], root causes before symptoms: a
+// dropped link also fails ffmpeg ("Network is unreachable"), and media
+// failures surface inside RTSP ERROR lines, so both outrank the RTSP rule.
+var ENGINE_FAILURES = [
+  [/Address already in use/, "port-busy"],
+  [/ERROR: Monitor '.*' not found/, "no-monitor"],
+  [/ERROR: Miracast\/WFD is not ready/, "not-ready"],
+  [/ERROR: NetworkManager (did not expose a Wi-Fi P2P device|P2P device disappeared)/, "no-p2p"],
+  [/ERROR: (No Wi-Fi Direct peers found|No peer matched selector)/, "not-found"],
+  [/ERROR: (Timed out waiting for NetworkManager|NetworkManager (de)?activated the Wi-Fi Direct connection)/, "link-failed"],
+  [/Network is unreachable|Cannot assign requested address/, "lost"],
+  [/exited immediately|Error opening output file/, "media-failed"],
+  [/WFD RTSP\] (ERROR: |Socket closed: |TV disconnected from )|<- request: TEARDOWN/, "rtsp-failed"]
+]
+
+// Why an engine run failed, from its log lines (the probe's log= lines).
+// Returns {code, detail} or null when the run shows no failure. detail
+// carries FluxCast's own words where no canned cause fits. Never throws.
+function engineFailure(lines) {
+  var list = lines || []
+  var text = list.join("\n")
+  for (var i = 0; i < ENGINE_FAILURES.length; i++) {
+    if (!ENGINE_FAILURES[i][0].test(text)) continue
+    var code = ENGINE_FAILURES[i][1]
+    if (code !== "rtsp-failed") return { code: code, detail: "" }
+    // Video already played: the sink ended a session, not its setup.
+    if (/PLAY accepted/.test(text)) return { code: "sink-ended", detail: "" }
+    var rtsp = /WFD RTSP\] ERROR: (.+)/.exec(text)
+    return { code: code, detail: rtsp ? rtsp[1] : "" }
+  }
+  var err = /\[FluxCast[^\]]*\] ERROR: (.+)/.exec(text)
+  if (err) return { code: "engine-error", detail: err[1] }
+  // Uncaught exception: the traceback's last line names it. A SIGINT
+  // before the session loop surfaces as KeyboardInterrupt -- that is our
+  // own teardown, not a crash.
+  if (/^Traceback \(most recent call last\):/m.test(text)) {
+    for (var j = list.length - 1; j >= 0; j--) {
+      var line = String(list[j]).trim()
+      if (/^KeyboardInterrupt/.test(line)) return null
+      if (/^[A-Za-z_][\w.]*(Error|Exception|Exit)\b/.test(line)) return { code: "crashed", detail: line }
+    }
+    return { code: "crashed", detail: "" }
+  }
+  return null
+}
+
+// The failure to report for an attempt: this attempt's engine log first,
+// then a logged firewall drop of the sink's RTSP dial, then what the
+// widget itself observed (fallback). sinceEpoch is when the attempt
+// launched; older log runs belong to an earlier attempt, and 0 ignores
+// the log (a foreign engine's output never reaches it). The "lost"
+// fallback is a drop after video, where only a sink teardown refines it.
+// Returns {code, detail}.
+function diagnose(status, sinceEpoch, fallback) {
+  var s = status || emptyStatus()
+  var since = Number(sinceEpoch || 0)
+  var lines = since > 0 && s.logRun >= since ? (s.logLines || []) : []
+  if (fallback === "lost") {
+    var ended = /<- request: TEARDOWN|TV disconnected from/.test(lines.join("\n"))
+    return { code: ended ? "sink-ended" : "lost", detail: "" }
+  }
+  var found = engineFailure(lines)
+  if (found) return found
+  if (s.fwBlocked) return { code: "firewall", detail: "" }
+  return { code: fallback || "engine-exit", detail: "" }
+}
+
+// FluxCast's own words for display: one line, no control characters,
+// capped so a traceback cannot flood the popup.
+function cleanDetail(detail) {
+  var s = String(detail === undefined || detail === null ? "" : detail)
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  return s.length > 160 ? s.slice(0, 159) + "…" : s
+}
+
+// User-facing text for a failure code: what went wrong, then what to do
+// when there is something to do. peer names the display ("" reads "the
+// display"). "" for no code.
+function errorMessage(code, peer, detail) {
+  var name = String(peer === undefined || peer === null ? "" : peer).trim()
+  var Who = name || "The display"
+  var who = name || "the display"
+  var why = cleanDetail(detail)
+  switch (String(code || "")) {
+  case "":
+    return ""
+  case "firewall":
+    return "Firewall is blocking " + who + " on TCP " + RTSP_PORT
+      + ". Run: sudo ufw allow " + RTSP_PORT + "/tcp && sudo ufw reload"
+  case "no-video":
+    return Who + " joined but never started video. If a firewall is active, allow TCP " + RTSP_PORT + "."
+  case "not-found":
+    return Who + " was not found. Is it on and in screen-mirroring mode?"
+  case "link-failed":
+    return Who + " did not complete the Wi-Fi Direct link. Try again."
+  case "rtsp-failed":
+    return Who + " broke off the video session setup" + (why ? " (" + why.replace(/\.$/, "") + ")." : ".")
+  case "sink-ended":
+    return Who + " ended the session."
+  case "lost":
+    return "Lost the connection to " + who + "."
+  case "media-failed":
+    return "Screen capture failed to start. See " + LOG_PATH
+  case "no-monitor":
+    return "No monitor found to capture."
+  case "port-busy":
+    return "TCP port " + RTSP_PORT + " is in use. Quit the other screencast sender."
+  case "not-ready":
+    return "Casting is not set up on this machine. Run: fluxcast --doctor"
+  case "no-p2p":
+    return "No Wi-Fi Direct device available. Is Wi-Fi on?"
+  case "not-installed":
+    return "FluxCast is not installed. Run: omarchy pkg aur add fluxcast-git"
+  case "crashed":
+    return why ? "FluxCast crashed: " + why : "FluxCast crashed. See " + LOG_PATH
+  case "engine-error":
+    return why ? "FluxCast: " + why : "FluxCast failed. See " + LOG_PATH
+  case "engine-exit":
+    return "FluxCast stopped before connecting. See " + LOG_PATH
+  default:
+    return "Screencast failed. See " + LOG_PATH
+  }
+}
+
+// Problems that refuse a click before any engine runs: a missing engine,
+// a foreign sender holding the RTSP port, no Wi-Fi Direct device. Wi-Fi
+// off is left to linkText, which already names it. "" when none.
+function steadyError(status) {
+  var s = status || emptyStatus()
+  if (!s.probed) return ""
+  if (!s.engineInstalled) return "not-installed"
+  if (!s.wifiOn) return ""
+  if (s.portBusy && !s.appRunning) return "port-busy"
+  if (!s.p2pDevice) return "no-p2p"
+  return ""
+}
+
+// Local setup problems fail identically on every attempt; everything else
+// may be the sink's flaky handshake and keeps the one automatic retry.
+var LOCAL_FAILURES = ["port-busy", "no-monitor", "not-ready", "no-p2p", "not-installed"]
+
+function shouldRetry(code) {
+  return LOCAL_FAILURES.indexOf(String(code || "")) === -1
 }
 
 // Cycling dots for activity lines ("Scanning", "Connecting to ..."),
@@ -393,9 +591,12 @@ function connectCommand(peer) {
   // FluxCast is Python: piped stdout is block-buffered, so without
   // PYTHONUNBUFFERED its own lines never reach the log when the engine is
   // signalled -- only its children's (ffmpeg, wf-recorder) stderr does.
+  // Each run opens with a marker carrying its start epoch, so the probe
+  // can hand the widget just this attempt's lines (see engineFailure).
   var logSetup = "log=\"$HOME/.local/state/kili.screencast/fluxcast.log\"; "
     + "mkdir -p \"${log%/*}\"; "
     + "if [ -f \"$log\" ]; then tail -n 200 \"$log\" > \"$log.tmp\" && mv -f \"$log.tmp\" \"$log\"; fi; "
+    + "printf '=== kili.screencast run %s ===\\n' \"$(date +%s)\" >> \"$log\"; "
   var script = logSetup
     + "mon=$(" + findMon + "); "
     + "if [ -z \"$mon\" ]; then "
@@ -455,6 +656,13 @@ if (typeof module !== "undefined") {
     disconnectCommand: disconnectCommand,
     heroStatus: heroStatus,
     tooltipText: tooltipText,
+    RTSP_PORT: RTSP_PORT,
+    engineFailure: engineFailure,
+    diagnose: diagnose,
+    cleanDetail: cleanDetail,
+    errorMessage: errorMessage,
+    steadyError: steadyError,
+    shouldRetry: shouldRetry,
     linkText: linkText,
     dots: dots,
     iconFor: iconFor,

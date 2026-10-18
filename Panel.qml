@@ -42,6 +42,23 @@ Panel {
   // Epoch ms when the engine was first seen linkless (0 = none).
   property double linklessSince: 0
   property bool wasConnected: false
+  // Why the last attempt failed ("" = none): set where the widget gives
+  // up, recovers, or sees a drop it did not cause; cleared by the next
+  // click or by video actually flowing. The automatic retry keeps it, so
+  // the popup says what is being retried.
+  property string errorCode: ""
+  property string errorText: ""
+  // Epoch seconds when this widget last launched its engine: engine log
+  // runs older than that belong to an earlier attempt. 0 while a foreign
+  // engine runs, whose output never reaches our log.
+  property double attemptEpoch: 0
+  // The session carried video, so a later drop is a lost cast rather
+  // than a failed connect.
+  property bool hadVideo: false
+  // Our own teardown is in flight: the drop it causes is not "lost".
+  property bool tearingDown: false
+  // Display name of the current or last peer, for error messages.
+  property string lastPeer: ""
   // Probe generations: a completion only judges a click when a probe
   // launched after that click completed, so stale in-flight results
   // can neither clear a fresh "Connecting..." nor record history twice.
@@ -54,6 +71,7 @@ Panel {
   readonly property bool appRunning: status.appRunning === true
   readonly property bool linkActive: connected || connecting
   readonly property color dimForeground: root.bar ? Qt.darker(root.bar.foreground, 1.4) : Color.foreground
+  readonly property color urgent: root.bar ? root.bar.urgent : Color.urgent
   readonly property var knownRows: Model.knownRows(root.sinks, status.knownRaw, Model.sessionMac(status))
   // The sink lists only show at rest: a live link or an outstanding
   // click collapses the popup to status plus Disconnect.
@@ -83,12 +101,23 @@ Panel {
   function updateStatus(text) {
     var parsed = Model.parseStatus(text)
     doneSeq = doneSeq + 1
+    var linkWas = wasConnected
     if (parsed.connected && !wasConnected) {
       var mac = Model.sessionMac(parsed)
       if (Model.isMacAddress(mac)) recordPeer(mac, Model.peerLabel(parsed))
     }
     wasConnected = parsed.connected
     status = parsed
+    if (parsed.connected) lastPeer = Model.peerLabel(parsed) || lastPeer
+    // A foreign engine's output never reaches our log, so the log must
+    // not explain its failures.
+    if (parsed.appRunning && !ownEngine) attemptEpoch = 0
+    // A cast that carried video dropped without our teardown: the sink
+    // ended it or the radio lost it. Without this the popup just flips
+    // back to Disconnected.
+    if (linkWas && !parsed.connected && hadVideo && !tearingDown) fail("lost")
+    if (!parsed.connected) hadVideo = false
+    if (!parsed.connected && !parsed.appRunning) tearingDown = false
     // Reap our own engine when it stays linkless past the grace period:
     // no link in that long means stuck, and the Disconnected popup shows
     // no Disconnect button, so nothing else could clear it. The timer
@@ -108,51 +137,62 @@ Panel {
       // A never-linked attempt whose engine wedged linkless gets the
       // same recovery as a dead one; a post-session engine just reaps.
       if (root.retryArmed && !root.attemptLinked && root.pendingSelector !== "") {
-        retryArmed = false
-        pendingConnect = true
-        pendingSeq = probeSeq
-        pendingTimer.restart()
-        root.disconnect()
-        recoveryTimer.restart()
+        fail("link-failed")
+        recover()
       } else {
+        if (root.errorCode === "") fail(root.attemptLinked ? "lost" : "link-failed")
         root.disconnect()
       }
     }
     if (!parsed.connected) root.waitingSince = 0
-    if (parsed.connected) {
+    if (recoveryTimer.running) {
+      // Mid-recovery: our own teardown is still dropping the old link,
+      // and the timer relaunches once it is gone. Judging this probe
+      // would clear the outstanding click and cancel the retry.
+    } else if (parsed.connected) {
       pendingConnect = false
       attemptLinked = true
       if (parsed.video) {
-        // The attempt succeeded; no recovery may fire for it later.
+        // The attempt succeeded; no recovery may fire for it later, and
+        // whatever failed on the way no longer applies.
         retryArmed = false
         waitingSince = 0
-      } else if (root.retryArmed && root.pendingSelector !== "" && !recoveryTimer.running) {
-        // Link up, no video: the sink's display app missed its trigger
-        // and never starts on its own (observed for minutes). After a
-        // patient wait, tear down and retry once instead of hanging.
+        hadVideo = true
+        clearError()
+      } else {
         if (root.waitingSince === 0) root.waitingSince = Date.now()
-        else if (Model.shouldRecoverWaiting(Date.now() - root.waitingSince)) {
-          root.waitingSince = 0
-          retryArmed = false
-          pendingConnect = true
-          pendingSeq = probeSeq
-          pendingTimer.restart()
-          root.disconnect()
-          recoveryTimer.restart()
+        if (parsed.fwBlocked) {
+          // The firewall drops the sink's RTSP dial. Say so at once and
+          // keep the link: the sink redials every ~20 s, so fixing the
+          // firewall lets the next dial through without a new click.
+          fail("firewall")
+        } else if (Model.shouldRecoverWaiting(Date.now() - root.waitingSince)) {
+          // Link up, no video: the sink's display app missed its trigger
+          // and never starts on its own (observed for minutes). After a
+          // patient wait, tear down and retry once; with no retry left,
+          // keep the link but say why it hangs.
+          if (root.retryArmed && root.pendingSelector !== "") {
+            fail("no-video")
+            recover()
+          } else if (root.errorCode === "") {
+            fail("no-video")
+          }
         }
       }
     } else if (pendingConnect) {
       // Slow legitimate connects (scan retries plus NM activation) can
       // outlast the give-up timer, so a live handshake extends it.
       if (parsed.connecting) pendingTimer.restart()
-      else if (doneSeq > pendingSeq && !parsed.appRunning && !recoveryTimer.running) {
+      else if (doneSeq > pendingSeq && !parsed.appRunning) {
         // Our engine died before any link: the sink accepted the
         // invitation but the group handshake collapsed (its own logs
         // show an identical retry succeeding). Retry once, after a
         // settle pause -- relaunching into the same instant repeats
         // the failure. pendingConnect stays set: the click is still
-        // outstanding, and Disconnect cancels the pending retry.
-        if (root.retryArmed && root.pendingSelector !== "") {
+        // outstanding, and Disconnect cancels the pending retry. Local
+        // setup problems fail the same way every time and skip it.
+        fail("engine-exit")
+        if (root.retryArmed && root.pendingSelector !== "" && Model.shouldRetry(root.errorCode)) {
           retryArmed = false
           pendingTimer.restart()
           recoveryTimer.restart()
@@ -188,22 +228,71 @@ Panel {
     Quickshell.execDetached(["sh", "-c", script])
   }
 
+  // Tear the attempt down and relaunch it once after the settle pause.
+  // disconnect() cancels an outstanding click, so the click is re-armed
+  // after it -- re-arming first left the retry timer nothing to retry.
+  function recover() {
+    retryArmed = false
+    root.disconnect()
+    pendingConnect = true
+    pendingSeq = probeSeq
+    pendingTimer.restart()
+    recoveryTimer.restart()
+  }
+
+  function setError(code, detail) {
+    errorCode = code
+    errorText = Model.errorMessage(code, root.lastPeer, detail)
+  }
+
+  function clearError() {
+    errorCode = ""
+    errorText = ""
+  }
+
+  // Record why the attempt failed: its own engine log first, then the
+  // firewall, then fallback -- what the widget itself observed.
+  function fail(fallback) {
+    var found = Model.diagnose(root.status, root.attemptEpoch, fallback)
+    setError(found.code, found.detail)
+  }
+
+  // Popup and tooltip error: the last attempt's failure, else a steady
+  // problem that would refuse a click. "" when nothing is wrong.
+  function errorLine() {
+    if (root.errorText !== "") return root.errorText
+    return Model.errorMessage(Model.steadyError(root.status), "", "")
+  }
+
   // Start a windowless cast to the clicked sink. Ignored while a
   // session is up, connecting, or tearing down, so a double click
   // cannot launch a second engine against the busy RTSP port. The popup
   // stays open to show the "Connecting to ..." progress; history is
   // recorded when the link actually comes up (see updateStatus), so
-  // failed attempts never pollute Previous Connections.
-  function connectTo(peer, name) {
+  // failed attempts never pollute Previous Connections. retry marks the
+  // automatic relaunch, which keeps the error that caused it.
+  function connectTo(peer, name, retry) {
     var selector = String(peer === undefined || peer === null ? "" : peer).trim()
     if (!Model.isPeerSelector(selector)) return
     if (root.appRunning || root.linkActive || root.pendingConnect || disconnectProc.running) return
     var display = String(name === undefined || name === null ? "" : name).trim()
     pendingPeer = (display === "" || display === "(unknown)") ? selector : display
+    lastPeer = pendingPeer
+    // A missing engine or a taken RTSP port fails every launch the same
+    // way: refuse up front and say why instead of launching blind.
+    var blocked = Model.steadyError(root.status)
+    if (blocked !== "") {
+      setError(blocked, "")
+      return
+    }
+    if (retry !== true) clearError()
     pendingSelector = selector
     retryArmed = true
     attemptLinked = false
     waitingSince = 0
+    hadVideo = false
+    tearingDown = false
+    attemptEpoch = Math.floor(Date.now() / 1000)
     pendingSeq = probeSeq
     pendingConnect = true
     ownEngine = true
@@ -215,11 +304,13 @@ Panel {
   }
 
   // Popup link line: live "Connecting to <peer>" progress while a
-  // click is outstanding, "Waiting for beamer" when the link is up but
-  // the sink never started video, otherwise the probed link state.
+  // click is outstanding ("Retrying" during the recovery pause), "Waiting
+  // for beamer" when the link is up but the sink never started video,
+  // otherwise the probed link state.
   function linkLine() {
     if (root.pendingConnect && !root.connected) {
-      return "Connecting to " + root.pendingPeer + Model.dots(root.animFrame)
+      var verb = recoveryTimer.running ? "Retrying " : "Connecting to "
+      return verb + root.pendingPeer + Model.dots(root.animFrame)
     }
     if (root.connected && !root.status.video) {
       return "Waiting for beamer" + Model.dots(root.animFrame)
@@ -229,6 +320,7 @@ Panel {
 
   function disconnect() {
     if (disconnectProc.running) return
+    tearingDown = true
     pendingConnect = false
     retryArmed = false
     waitingSince = 0
@@ -308,11 +400,16 @@ Panel {
   }
 
   // Gives up the "Connecting to ..." line if no link comes up: instant
-  // engine failures would otherwise read as progress forever.
+  // engine failures would otherwise read as progress forever. An error
+  // the engine already explained is kept.
   Timer {
     id: pendingTimer
     interval: 45000
-    onTriggered: if (!root.connected) root.pendingConnect = false
+    onTriggered: {
+      if (root.connected) return
+      root.pendingConnect = false
+      if (root.errorCode === "") root.fail("link-failed")
+    }
   }
 
   // The one automatic retry, after a settle pause: relaunching into the
@@ -335,7 +432,7 @@ Panel {
       // connectTo refuses while the click is outstanding; clear it for
       // the relaunch (it sets it again itself).
       root.pendingConnect = false
-      root.connectTo(root.pendingSelector, root.pendingPeer)
+      root.connectTo(root.pendingSelector, root.pendingPeer, true)
       root.retryArmed = false
     }
   }
@@ -356,7 +453,10 @@ Panel {
         video: root.status.video === true,
         engine: root.appRunning,
         wifi: root.status.wifiOn,
-        peer: Model.peerLabel(root.status)
+        peer: Model.peerLabel(root.status),
+        // The popup's error line and its stable code ("" when none).
+        error: root.errorLine(),
+        errorCode: root.errorCode !== "" ? root.errorCode : Model.steadyError(root.status)
       })
     }
 
@@ -364,6 +464,10 @@ Panel {
       if (!Model.isPeerSelector(peer)) return JSON.stringify({ ok: false, reason: "invalid peer" })
       if (root.appRunning || root.linkActive || root.pendingConnect || disconnectProc.running) {
         return JSON.stringify({ ok: false, reason: "busy" })
+      }
+      var blocked = Model.steadyError(root.status)
+      if (blocked !== "") {
+        return JSON.stringify({ ok: false, reason: blocked, error: Model.errorMessage(blocked, "", "") })
       }
       // Names resolve against cached discovery to an exact MAC first:
       // FluxCast itself would cast to the first substring match.
@@ -441,7 +545,7 @@ Panel {
     active: root.connected
     activeColor: Color.accent
     dimmed: !root.connected && !root.appRunning
-    tooltipText: Model.tooltipText(root.status)
+    tooltipText: Model.tooltipText(root.status, root.errorLine())
     onPressed: function(b) {
       if (b === Qt.RightButton) root.refresh(root.opened)
       else root.toggle()
@@ -525,6 +629,21 @@ Panel {
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.bodySmall
           elide: Text.ElideRight
+          width: parent.width
+        }
+
+        // Why the last attempt failed, or what would refuse a click, in
+        // the shell's urgent color; wrapped so a remedy command stays
+        // readable in full.
+        Text {
+          textFormat: Text.PlainText
+          visible: root.errorLine() !== ""
+          height: visible ? implicitHeight : 0
+          text: root.errorLine()
+          color: root.urgent
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
           width: parent.width
         }
 
