@@ -390,6 +390,9 @@ function connectCommand(peer) {
   // the sink's video session ("waiting for TV RTSP" vs "TV connected"),
   // so every run appends to a trimmed log: without it a stuck session
   // leaves no trace once its link state is all the widget shows.
+  // FluxCast is Python: piped stdout is block-buffered, so without
+  // PYTHONUNBUFFERED its own lines never reach the log when the engine is
+  // signalled -- only its children's (ffmpeg, wf-recorder) stderr does.
   var logSetup = "log=\"$HOME/.local/state/kili.screencast/fluxcast.log\"; "
     + "mkdir -p \"${log%/*}\"; "
     + "if [ -f \"$log\" ]; then tail -n 200 \"$log\" > \"$log.tmp\" && mv -f \"$log.tmp\" \"$log\"; fi; "
@@ -402,7 +405,7 @@ function connectCommand(peer) {
     + "mon=$(DISPLAY=$d " + findMon + "); "
     + "[ -n \"$mon\" ] && break; "
     + "done; fi; "
-    + "fluxcast --protocol wfd --wfd-timeout 4 --wfd-peer " + shQuote(peer)
+    + "PYTHONUNBUFFERED=1 fluxcast --protocol wfd --wfd-timeout 4 --wfd-peer " + shQuote(peer)
     + " ${mon:+--monitor \"$mon\"} </dev/null 2>&1 | tee -a \"$log\" >/dev/null"
   return ["sh", "-c", script]
 }

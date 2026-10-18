@@ -526,6 +526,9 @@ describe("engine commands", () => {
     assert.match(cmd[2], /fluxcast\.log/);
     assert.match(cmd[2], /tee -a/);
     assert.match(cmd[2], /tail -n 200/);
+    // Python block-buffers piped stdout: FluxCast's own lines are lost
+    // when the engine is signalled unless output is unbuffered.
+    assert.match(cmd[2], /PYTHONUNBUFFERED=1 fluxcast /);
   });
 
   it("quotes a hostile peer selector safely", () => {
