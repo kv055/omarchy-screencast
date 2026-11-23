@@ -37,9 +37,12 @@ and what it observed itself, and names the cause, with a fix where
 there is one. A firewall dropping the sink's RTSP dial shows up while
 the link waits, and the link is kept: the sink redials every ~20 s, so
 fixing the firewall lets video start without a new click. Local setup
-problems (no FluxCast, port 7236 taken, no monitor, no Wi-Fi Direct
-device) refuse the click up front and skip the automatic retry. The
-error stays until the next click or until video flows.
+problems (no FluxCast, wf-recorder or xrandr missing, port 7236 taken, no
+monitor, no Wi-Fi Direct device) refuse the click up front and skip the
+automatic retry. The error stays until the next click or until video
+flows. A status probe that cannot run at all -- a broken plugin
+directory, e.g. a dangling symlink -- reads as `probe-failed` instead
+of silently showing stale data; the next healthy probe clears it.
 
 | Code            | Meaning                                                        |
 | --------------- | -------------------------------------------------------------- |
@@ -55,8 +58,11 @@ error stays until the next click or until video flows.
 | `port-busy`     | Another sender holds TCP 7236                                  |
 | `not-ready`     | FluxCast's doctor checks fail (`fluxcast --doctor`)            |
 | `no-p2p`        | NetworkManager exposes no Wi-Fi P2P device                     |
-| `not-installed` | `fluxcast` is not on `PATH`                                    |
-| `crashed`       | FluxCast died with an uncaught exception (named)               |
+| `not-installed` | `fluxcast` is not on `PATH`                                     |
+| `no-recorder`   | `wf-recorder` is not on `PATH`                                 |
+| `no-xrandr`     | `xrandr` is not on `PATH`                                       |
+| `probe-failed`  | The status probe could not run (plugin files missing/broken)    |
+| `crashed`       | FluxCast died with an uncaught exception (named)                |
 | `engine-error`  | Any other FluxCast `ERROR:` line, shown verbatim               |
 | `engine-exit`   | FluxCast exited before a link with nothing in its log          |
 

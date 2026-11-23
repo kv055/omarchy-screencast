@@ -15,10 +15,14 @@
 // "Wi-Fi P2P Peer 9A:03:..."), so fields split on unescaped ':' only.
 //
 // Failure evidence rides along: "engine_bin=<yes|no>" (FluxCast
-// installed), "rtsp_port=busy" (a foreign listener holds the RTSP port),
-// "fw_block=<n>" (logged firewall drops of the sink's RTSP dial, only
-// while an engine runs), and the latest engine run from fluxcast.log as
-// one "log_run=<epoch>" line plus up to 60 "log=<line>" lines.
+// installed), "capture_bin=<yes|no>" (wf-recorder),
+// "xrandr_bin=<yes|no>", "rtsp_port=busy" (a foreign listener holds the
+// RTSP port), "fw_block=<n>" (logged firewall drops of the sink's RTSP
+// dial, only while an engine runs), and the latest engine run from
+// fluxcast.log as one "log_run=<epoch>" line plus up to 60 "log=<line>"
+// lines. An answer without an "app=" line means the probe itself is
+// broken: parseStatus leaves probed false, which the popup reports as
+// "probe-failed".
 
 // Nerd Font icons (JetBrainsMono Nerd Font, verified in the installed file):
 // U+F0118 cast outline, U+F0119 cast with filled screen (connected).
@@ -81,6 +85,8 @@ function emptyStatus() {
     // "no P2P device" and refuse the first click.
     probed: false,
     engineInstalled: true,
+    captureInstalled: true,
+    xrandrInstalled: true,
     portBusy: false,
     fwBlocked: false,
     logRun: 0,
@@ -194,6 +200,16 @@ function parseStatus(text) {
       continue
     }
     if (line === "engine_bin=yes") continue
+    if (line === "capture_bin=no") {
+      status.captureInstalled = false
+      continue
+    }
+    if (line === "capture_bin=yes") continue
+    if (line === "xrandr_bin=no") {
+      status.xrandrInstalled = false
+      continue
+    }
+    if (line === "xrandr_bin=yes") continue
     if (line === "rtsp_port=busy") {
       status.portBusy = true
       continue
@@ -400,6 +416,13 @@ function errorMessage(code, peer, detail) {
     return "No Wi-Fi Direct device available. Is Wi-Fi on?"
   case "not-installed":
     return "FluxCast is not installed. Run: omarchy pkg aur add fluxcast-git"
+  case "no-recorder":
+    return "wf-recorder is not installed. Run: omarchy pkg add wf-recorder"
+  case "no-xrandr":
+    return "xrandr is not installed. Run: omarchy pkg add xorg-xrandr"
+  case "probe-failed":
+    return "Status probe did not answer - plugin files are missing or broken."
+      + " Fix ~/.config/omarchy/plugins/kili.screencast, then run: omarchy restart shell"
   case "crashed":
     return why ? "FluxCast crashed: " + why : "FluxCast crashed. See " + LOG_PATH
   case "engine-error":
@@ -411,13 +434,16 @@ function errorMessage(code, peer, detail) {
   }
 }
 
-// Problems that refuse a click before any engine runs: a missing engine,
-// a foreign sender holding the RTSP port, no Wi-Fi Direct device. Wi-Fi
-// off is left to linkText, which already names it. "" when none.
+// Problems that refuse a click before any engine runs: a missing engine
+// or its capture/monitor tools, a foreign sender holding the RTSP port,
+// no Wi-Fi Direct device. Wi-Fi off is left to linkText, which already
+// names it. "" when none.
 function steadyError(status) {
   var s = status || emptyStatus()
   if (!s.probed) return ""
   if (!s.engineInstalled) return "not-installed"
+  if (!s.captureInstalled) return "no-recorder"
+  if (!s.xrandrInstalled) return "no-xrandr"
   if (!s.wifiOn) return ""
   if (s.portBusy && !s.appRunning) return "port-busy"
   if (!s.p2pDevice) return "no-p2p"
@@ -426,7 +452,7 @@ function steadyError(status) {
 
 // Local setup problems fail identically on every attempt; everything else
 // may be the sink's flaky handshake and keeps the one automatic retry.
-var LOCAL_FAILURES = ["port-busy", "no-monitor", "not-ready", "no-p2p", "not-installed"]
+var LOCAL_FAILURES = ["port-busy", "no-monitor", "not-ready", "no-p2p", "not-installed", "no-recorder", "no-xrandr"]
 
 function shouldRetry(code) {
   return LOCAL_FAILURES.indexOf(String(code || "")) === -1

@@ -12,6 +12,7 @@
 # "sink=<name>\t<hw>\t<wfd>\t<active>" line per peer.
 #
 # Failure evidence for the widget's error line: "engine_bin=<yes|no>",
+# "capture_bin=<yes|no>" (wf-recorder), "xrandr_bin=<yes|no>",
 # "rtsp_port=busy" when a foreign listener holds port 7236,
 # "fw_block=<n>" (logged firewall drops of the sink's RTSP dial, while
 # an engine runs), and the latest engine run from fluxcast.log as
@@ -30,10 +31,23 @@ pgrep -f 'protocol wf[d]' >/dev/null 2>&1 && app=running
 echo "app=$app"
 
 # A missing engine fails every click; name it before anything else.
+# The capture and monitor tools are just as fatal to a cast (FluxCast
+# spawns wf-recorder, the widget resolves the monitor via xrandr), so
+# they are probed the same way and refuse clicks with their own codes.
 if command -v fluxcast >/dev/null 2>&1; then
   echo engine_bin=yes
 else
   echo engine_bin=no
+fi
+if command -v wf-recorder >/dev/null 2>&1; then
+  echo capture_bin=yes
+else
+  echo capture_bin=no
+fi
+if command -v xrandr >/dev/null 2>&1; then
+  echo xrandr_bin=yes
+else
+  echo xrandr_bin=no
 fi
 
 wifi_state=enabled

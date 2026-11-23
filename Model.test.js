@@ -176,6 +176,8 @@ describe("parseStatus", () => {
       ],
       probed: true,
       engineInstalled: true,
+      captureInstalled: true,
+      xrandrInstalled: true,
       portBusy: false,
       fwBlocked: false,
       logRun: 0,
@@ -803,6 +805,8 @@ describe("error messages", () => {
     );
     assert.equal(s.probed, true);
     assert.equal(s.engineInstalled, true);
+    assert.equal(s.captureInstalled, true);
+    assert.equal(s.xrandrInstalled, true);
     assert.equal(s.fwBlocked, true);
     assert.equal(s.portBusy, false);
     assert.equal(s.logRun, 1792347896);
@@ -814,6 +818,26 @@ describe("error messages", () => {
     assert.equal(idle.portBusy, true);
     assert.equal(idle.fwBlocked, false);
     assert.equal(M.emptyStatus().probed, false);
+  });
+
+  it("parses the capture and monitor tool checks", () => {
+    const s = M.parseStatus(NMCLI_IDLE + "engine_bin=yes\ncapture_bin=no\nxrandr_bin=no\n");
+    assert.equal(s.probed, true);
+    assert.equal(s.engineInstalled, true);
+    assert.equal(s.captureInstalled, false);
+    assert.equal(s.xrandrInstalled, false);
+    // The yes lines and absent lines read the same: installed.
+    assert.equal(M.parseStatus(NMCLI_IDLE + "capture_bin=yes\n").captureInstalled, true);
+    assert.equal(M.emptyStatus().captureInstalled, true);
+    assert.equal(M.emptyStatus().xrandrInstalled, true);
+  });
+
+  it("reads a probe that answered nothing as not probed", () => {
+    // A broken plugin directory (dangling symlink) leaves sh exiting
+    // nonzero with empty stdout; the widget reports probe-failed.
+    assert.equal(M.parseStatus("").probed, false);
+    assert.equal(M.parseStatus("\n").probed, false);
+    assert.equal(M.parseStatus("engine_bin=yes\n").probed, false);
   });
 
   it("diagnoses from this attempt's log, then the firewall, then the fallback", () => {
@@ -851,11 +875,18 @@ describe("error messages", () => {
     );
     assert.equal(M.errorMessage("engine-error", "", "Something new"), "FluxCast: Something new");
     assert.equal(M.errorMessage("not-installed", "", ""), "FluxCast is not installed. Run: omarchy pkg aur add fluxcast-git");
+    assert.equal(M.errorMessage("no-recorder", "", ""), "wf-recorder is not installed. Run: omarchy pkg add wf-recorder");
+    assert.equal(M.errorMessage("no-xrandr", "", ""), "xrandr is not installed. Run: omarchy pkg add xorg-xrandr");
+    assert.equal(
+      M.errorMessage("probe-failed", "", ""),
+      "Status probe did not answer - plugin files are missing or broken. " +
+      "Fix ~/.config/omarchy/plugins/kili.screencast, then run: omarchy restart shell"
+    );
     assert.match(M.errorMessage("no-such-code", "", ""), /^Screencast failed\. See ~\/\.local\/state\/kili\.screencast\/fluxcast\.log$/);
     // Every code the widget can produce has its own text.
     const codes = ["firewall", "no-video", "not-found", "link-failed", "rtsp-failed", "sink-ended", "lost",
-      "media-failed", "no-monitor", "port-busy", "not-ready", "no-p2p", "not-installed", "crashed",
-      "engine-error", "engine-exit"];
+      "media-failed", "no-monitor", "port-busy", "not-ready", "no-p2p", "not-installed", "no-recorder",
+      "no-xrandr", "probe-failed", "crashed", "engine-error", "engine-exit"];
     for (const code of codes) {
       assert.doesNotMatch(M.errorMessage(code, "U0320", ""), /^Screencast failed/, code);
     }
@@ -873,6 +904,14 @@ describe("error messages", () => {
     assert.equal(M.steadyError(M.emptyStatus()), "", "unprobed status is not an error");
     assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE)), "");
     assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE + "engine_bin=no\n")), "not-installed");
+    // Missing capture and monitor tools refuse with their own codes,
+    // after the engine: the engine is the bigger, likelier gap.
+    assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE + "capture_bin=no\n")), "no-recorder");
+    assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE + "xrandr_bin=no\n")), "no-xrandr");
+    assert.equal(
+      M.steadyError(M.parseStatus(NMCLI_IDLE + "engine_bin=no\ncapture_bin=no\nxrandr_bin=no\n")),
+      "not-installed"
+    );
     assert.equal(M.steadyError(M.parseStatus(NMCLI_IDLE + "rtsp_port=busy\n")), "port-busy");
     // Our own running engine holds the port legitimately.
     assert.equal(M.steadyError(M.parseStatus(FLUXCAST_WAITING + "rtsp_port=busy\n")), "");
@@ -883,7 +922,7 @@ describe("error messages", () => {
     for (const code of ["not-found", "link-failed", "engine-exit", "rtsp-failed", "no-video", "lost"]) {
       assert.equal(M.shouldRetry(code), true, code);
     }
-    for (const code of ["port-busy", "no-monitor", "not-ready", "no-p2p", "not-installed"]) {
+    for (const code of ["port-busy", "no-monitor", "not-ready", "no-p2p", "not-installed", "no-recorder", "no-xrandr"]) {
       assert.equal(M.shouldRetry(code), false, code);
     }
   });

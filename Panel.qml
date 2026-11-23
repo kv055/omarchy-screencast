@@ -100,6 +100,17 @@ Panel {
 
   function updateStatus(text) {
     var parsed = Model.parseStatus(text)
+    // A probe that answered nothing (no "app=" line) is itself broken --
+    // a dangling plugin symlink or a deleted probe.sh -- and would
+    // otherwise leave the popup showing stale data forever, reading as
+    // a working widget. Say so in the popup, tooltip and IPC, keep the
+    // last good status for context, and refuse new clicks; the next
+    // healthy probe clears it.
+    if (!parsed.probed) {
+      if (root.errorCode !== "probe-failed") setError("probe-failed", "")
+      return
+    }
+    if (root.errorCode === "probe-failed") clearError()
     doneSeq = doneSeq + 1
     var linkWas = wasConnected
     if (parsed.connected && !wasConnected) {
@@ -278,8 +289,11 @@ Panel {
     var display = String(name === undefined || name === null ? "" : name).trim()
     pendingPeer = (display === "" || display === "(unknown)") ? selector : display
     lastPeer = pendingPeer
-    // A missing engine or a taken RTSP port fails every launch the same
-    // way: refuse up front and say why instead of launching blind.
+    // A missing engine, missing capture tools, or a taken RTSP port fails
+    // every launch the same way: refuse up front and say why instead of
+    // launching blind. A broken status probe also refuses: the widget
+    // could neither confirm the link nor tear it down.
+    if (root.errorCode === "probe-failed") return
     var blocked = Model.steadyError(root.status)
     if (blocked !== "") {
       setError(blocked, "")
@@ -466,6 +480,7 @@ Panel {
         return JSON.stringify({ ok: false, reason: "busy" })
       }
       var blocked = Model.steadyError(root.status)
+      if (root.errorCode === "probe-failed") blocked = "probe-failed"
       if (blocked !== "") {
         return JSON.stringify({ ok: false, reason: blocked, error: Model.errorMessage(blocked, "", "") })
       }
